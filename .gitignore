@@ -8,5 +8,11 @@
 *.lst
 *_host
 host_saves/
+host_roms/
+uni-bios-40/
+uni-bios-40.zip
+neogeo.zip
+bios/
+*.gno
 .DS_Store
 __pycache__/

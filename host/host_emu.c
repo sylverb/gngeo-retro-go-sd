@@ -30,7 +30,6 @@
 
 uint32_t __CORE_BSS_END__;
 uint32_t __CORE_CODE_END__;
-uint32_t ram_start;
 
 common_emu_state_t common_emu_state;
 uint32_t common_emu_sound_dma_marker;
@@ -68,9 +67,6 @@ static uint8_t sound_volume = 255;
 static uint32_t lcd_refresh_hz = 60;
 static uint32_t frame_start_ms;
 static int quit_requested;
-static uint8_t *ram_pool;
-static size_t ram_pool_size;
-static size_t ram_pool_used;
 static int32_t settings_beep = 1;
 static state_handler_t host_load_state_cb;
 static state_handler_t host_save_state_cb;
@@ -181,21 +177,35 @@ static const uint8_t font8x8_basic[96][8] = {
 
 void gw_core_bridge_init(void)
 {
+    /* Preserve ROM path set by host_set_rom_path() before/after re-init. */
+    char saved_path[sizeof(host_active_file.path)];
+    char saved_name[sizeof(host_active_file.name)];
+    uint32_t saved_size = host_active_file.size;
+    int had_rom = host_active_file.path[0] != '\0';
+    if (had_rom) {
+        memcpy(saved_path, host_active_file.path, sizeof(saved_path));
+        memcpy(saved_name, host_active_file.name, sizeof(saved_name));
+    }
+
     framebuffer1 = fb_storage[0];
     framebuffer2 = fb_storage[1];
     active_framebuffer = 0;
     memset(&common_emu_state, 0, sizeof(common_emu_state));
     memset(&host_pad, 0, sizeof(host_pad));
     memset(&host_active_file, 0, sizeof(host_active_file));
+    if (had_rom) {
+        memcpy(host_active_file.path, saved_path, sizeof(saved_path));
+        memcpy(host_active_file.name, saved_name, sizeof(saved_name));
+        host_active_file.size = saved_size;
+    } else {
 #if defined(PROJECT_KIND_HOMEBREW)
-    strncpy(host_active_file.name, "ExampleHB.bin", sizeof(host_active_file.name) - 1);
-    strncpy(host_active_file.path, "ExampleHB.bin", sizeof(host_active_file.path) - 1);
+        strncpy(host_active_file.name, "ExampleHB.bin", sizeof(host_active_file.name) - 1);
+        strncpy(host_active_file.path, "ExampleHB.bin", sizeof(host_active_file.path) - 1);
 #else
-    strncpy(host_active_file.name, "(no rom)", sizeof(host_active_file.name) - 1);
+        strncpy(host_active_file.name, "(no rom)", sizeof(host_active_file.name) - 1);
 #endif
-    ram_pool_size = 4 * 1024 * 1024;
-    ram_pool = (uint8_t *)malloc(ram_pool_size);
-    ram_pool_used = 0;
+    }
+    ram_init();
     frame_start_ms = host_platform_ticks_ms();
 }
 
@@ -292,6 +302,16 @@ void lcd_wait_for_vblank(void)
     host_platform_delay_ms(1);
 }
 
+uint32_t lcd_is_swap_pending(void)
+{
+    return 0;
+}
+
+bool lcd_sleep_while_swap_pending(void)
+{
+    return false;
+}
+
 void lcd_set_refresh_rate(uint32_t frequency)
 {
     if (frequency)
@@ -322,6 +342,13 @@ void audio_start_playing(uint16_t length)
     audio_started = 1;
     memset(audio_half_bufs, 0, sizeof(audio_half_bufs));
     host_platform_audio_start(odroid_audio_sample_rate_get(), (int)length);
+    /* Prefill ~3 halves so the first slow frames don't underrun. */
+    {
+        static int16_t silence[AUDIO_BUFFER_LENGTH];
+        int i;
+        for (i = 0; i < 3; i++)
+            host_platform_audio_queue(silence, (int)length);
+    }
 }
 
 void audio_start_playing_full_length(uint16_t length)
@@ -389,7 +416,7 @@ void common_emu_sound_sync(bool use_nops)
         int16_t *buf = audio_get_active_buffer();
         uint16_t len = audio_get_buffer_length();
         host_platform_audio_queue(buf, (int)len);
-        /* Pace roughly to one half-buffer. */
+        /* Pace on audio: keep about 2–3 half-buffers queued (~33–50 ms). */
         while (host_platform_audio_queued_samples() > (int)len * 3) {
             host_platform_delay_ms(1);
             host_poll_events();
@@ -449,9 +476,15 @@ bool common_emu_frame_loop(void)
 {
     uint32_t now;
     uint32_t target_ms;
+    uint32_t deadline;
 
     host_poll_events();
     host_maybe_quit();
+
+    /* When audio is running, common_emu_sound_sync is the clock — a second
+     * video sleep here fights the queue and causes underrun crackles. */
+    if (audio_started && !audio_muted && !audio_mute)
+        return true;
 
     target_ms = common_emu_state.frame_time_10us
                     ? (uint32_t)((common_emu_state.frame_time_10us + 50) / 100)
@@ -459,11 +492,19 @@ bool common_emu_frame_loop(void)
     if (target_ms == 0)
         target_ms = 16;
 
+    /*
+     * Pace on a running deadline so slow frames catch up instead of
+     * sleeping before work and drifting further behind (slow UniBIOS fade).
+     */
+    if (frame_start_ms == 0)
+        frame_start_ms = host_platform_ticks_ms();
+    deadline = frame_start_ms + target_ms;
     now = host_platform_ticks_ms();
-    if (now < frame_start_ms + target_ms) {
-        host_platform_delay_ms(frame_start_ms + target_ms - now);
-    }
-    frame_start_ms = host_platform_ticks_ms();
+    if (now < deadline)
+        host_platform_delay_ms(deadline - now);
+    else if (now > deadline + target_ms * 2)
+        deadline = now; /* fell far behind — resync */
+    frame_start_ms = deadline;
     return true;
 }
 
@@ -619,11 +660,63 @@ void odroid_overlay_alert(const char *text) { (void)text; }
 uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p,
                                             bool byte_swap)
 {
-    (void)file_path;
-    (void)byte_swap;
+    FILE *f;
+    long sz;
+    uint8_t *buf;
+    size_t n, i;
+    static uint8_t *host_rom_cache;
+
     if (file_size_p)
         *file_size_p = 0;
-    return NULL;
+    if (!file_path || !file_path[0])
+        return NULL;
+
+    f = fopen(file_path, "rb");
+    if (!f) {
+        perror("host: ROM open");
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    sz = ftell(f);
+    if (sz <= 0) {
+        fclose(f);
+        return NULL;
+    }
+    rewind(f);
+
+    buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) {
+        fclose(f);
+        fprintf(stderr, "host: ROM malloc(%ld) failed\n", sz);
+        return NULL;
+    }
+    n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (n != (size_t)sz) {
+        free(buf);
+        fprintf(stderr, "host: ROM short read (%zu / %ld)\n", n, sz);
+        return NULL;
+    }
+
+    if (byte_swap) {
+        for (i = 0; i + 1 < n; i += 2) {
+            uint8_t t = buf[i];
+            buf[i] = buf[i + 1];
+            buf[i + 1] = t;
+        }
+    }
+
+    free(host_rom_cache);
+    host_rom_cache = buf;
+    host_active_file.address = buf;
+    host_active_file.size = (uint32_t)n;
+    if (file_size_p)
+        *file_size_p = (uint32_t)n;
+    printf("host: loaded ROM %zu bytes%s\n", n, byte_swap ? " (byteswap16)" : "");
+    return buf;
 }
 
 size_t odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_address)
@@ -787,48 +880,6 @@ bool odroid_settings_ActiveGameGenieCodes_set(char *game_path, int code_index, b
     (void)enable;
     return false;
 }
-
-void *ram_malloc(size_t size)
-{
-    void *p;
-    size = (size + 7u) & ~7u;
-    if (!ram_pool || ram_pool_used + size > ram_pool_size)
-        return NULL;
-    p = ram_pool + ram_pool_used;
-    ram_pool_used += size;
-    return p;
-}
-
-void *ram_calloc(size_t count, size_t size)
-{
-    size_t n = count * size;
-    void *p = ram_malloc(n);
-    if (p)
-        memset(p, 0, n);
-    return p;
-}
-
-size_t ram_get_free_size(void)
-{
-    return ram_pool ? (ram_pool_size - ram_pool_used) : 0;
-}
-
-void ram_init(void)
-{
-    ram_pool_used = 0;
-}
-
-void *ahb_malloc(size_t size) { return malloc(size); }
-void *ahb_calloc(size_t count, size_t size) { return calloc(count, size); }
-size_t ahb_get_free_size(void) { return 1024 * 1024; }
-void itc_init(void) {}
-void *itc_malloc(size_t size) { return malloc(size); }
-void *itc_calloc(size_t count, size_t size) { return calloc(count, size); }
-size_t itc_get_free_size(void) { return 64 * 1024; }
-void dtc_init(void) {}
-void *dtc_malloc(size_t size) { return malloc(size); }
-void *dtc_calloc(size_t count, size_t size) { return calloc(count, size); }
-size_t dtc_get_free_size(void) { return 64 * 1024; }
 
 void wdog_refresh(void)
 {

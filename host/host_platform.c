@@ -73,6 +73,7 @@ int host_platform_init(const char *title, int scale)
         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return -1;
     }
+    /* No PRESENTVSYNC — common_emu_frame_loop already paces to 60 Hz. */
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
         renderer = SDL_CreateRenderer(window, -1, 0);
@@ -81,6 +82,9 @@ int host_platform_init(const char *title, int scale)
         fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
         return -1;
     }
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+    SDL_RenderSetVSync(renderer, 0);
+#endif
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565,
                                 SDL_TEXTUREACCESS_STREAMING, fb_w, fb_h);
 #endif

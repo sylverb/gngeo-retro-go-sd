@@ -82,6 +82,11 @@ uint32_t dma2d_r2m_rgb565_start(uint32_t color, uint32_t dst, uint16_t width, ui
                                 uint16_t dst_offset);
 uint32_t dma2d_poll(uint32_t timeout_ms);
 
+/* External-flash blob cache (objcopy → core_lookup/store_data_in_flash). */
+const uint8_t *lookup_data_in_flash(const char *key, uint32_t *size_out);
+const uint8_t *store_data_in_flash(const char *key, const uint8_t *data,
+                                   uint32_t data_size);
+
 /* One-time bridge setup. Currently a no-op placeholder (all state above is
  * accessed live through macros, nothing to snapshot at init) — kept so a
  * future core/bridge extension has an obvious place to hook into without
