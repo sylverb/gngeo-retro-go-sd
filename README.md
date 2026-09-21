@@ -55,8 +55,9 @@ Shift = Select (coin). Esc quits.
 The device maps the `.gno` in OSPI flash. Classic `gngeo --dump` files compress
 sprite tiles (type 1); this core only accepts **uncompressed** regions (type 0).
 
+Some .gno files for gngeo are available [here](https://github.com/steward-fu/website/releases/tag/neogeo), these files has to be converted using tools/make_gno_xip.py script.
+
 ```bash
-gngeo -i /path/to/roms --dump maglord
 python3 tools/make_gno_xip.py maglord.gno -o maglord.gno
 # BIOS is optional in the .gno when /bios/neogeo is present on the SD card.
 # --bios still works if you want a self-contained file.
