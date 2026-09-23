@@ -2958,6 +2958,8 @@ void YM2610Update_stream(int length) {
 #if NEO_YM_EARLYOUT
 	int lfo_on;
 	int ssg_live;
+	int adpcm_a_live;
+	int adpcm_b_live;
 #endif
 
 	//printf("AAA %d\n",length);
@@ -2999,6 +3001,16 @@ void YM2610Update_stream(int length) {
 		outn = SSG_calc_count(length);
 	else
 		out_ssg = 0;
+
+	/* ADPCM-A/B: hoist idle check so quiet buffers skip clear+mix. */
+	adpcm_b_live = (YM2610.adpcmb.portstate & 0x80) != 0;
+	adpcm_a_live = 0;
+	for (j = 0; j < 6; j++) {
+		if (YM2610.adpcma[j].flag) {
+			adpcm_a_live = 1;
+			break;
+		}
+	}
 #else
 	outn = SSG_calc_count(length);
 #endif
@@ -3013,11 +3025,20 @@ void YM2610Update_stream(int length) {
 		advance_lfo(OPN);
 #endif
 
+#if NEO_YM_EARLYOUT
+		if (adpcm_a_live || adpcm_b_live) {
+			out_adpcma[OUTD_LEFT] = out_adpcma[OUTD_RIGHT] =
+					out_adpcma[OUTD_CENTER] = 0;
+			out_delta[OUTD_LEFT] = out_delta[OUTD_RIGHT] =
+					out_delta[OUTD_CENTER] = 0;
+		}
+#else
 		/* clear output acc. */
 		out_adpcma[OUTD_LEFT] = out_adpcma[OUTD_RIGHT] =
 				out_adpcma[OUTD_CENTER] = 0;
 		out_delta[OUTD_LEFT] = out_delta[OUTD_RIGHT] = out_delta[OUTD_CENTER] =
 				0;
+#endif
 
 		/* clear outputs */
 		out_fm[1] = 0;
@@ -3067,6 +3088,17 @@ void YM2610Update_stream(int length) {
 #else
 		outn = SSG_CALC(outn);
 #endif
+
+#if NEO_YM_EARLYOUT
+		if (adpcm_b_live)
+			OPNB_ADPCMB_CALC(&YM2610.adpcmb);
+		if (adpcm_a_live) {
+			for (j = 0; j < 6; j++) {
+				if (YM2610.adpcma[j].flag)
+					OPNB_ADPCMA_calc_chan(&YM2610.adpcma[j]);
+			}
+		}
+#else
 		/* deltaT ADPCM */
 		if (YM2610.adpcmb.portstate & 0x80)
 			OPNB_ADPCMB_CALC(&YM2610.adpcmb);
@@ -3075,12 +3107,26 @@ void YM2610Update_stream(int length) {
 			if (YM2610.adpcma[j].flag)
 				OPNB_ADPCMA_calc_chan(&YM2610.adpcma[j]);
 		}
+#endif
 		/* buffering */
+		lt = 0;
+		rt = 0;
+#if NEO_YM_EARLYOUT
+		if (adpcm_a_live) {
+			lt = out_adpcma[OUTD_LEFT] + out_adpcma[OUTD_CENTER];
+			rt = out_adpcma[OUTD_RIGHT] + out_adpcma[OUTD_CENTER];
+		}
+		if (adpcm_b_live) {
+			lt += (out_delta[OUTD_LEFT] + out_delta[OUTD_CENTER]) >> 9;
+			rt += (out_delta[OUTD_RIGHT] + out_delta[OUTD_CENTER]) >> 9;
+		}
+#else
 		lt = out_adpcma[OUTD_LEFT] + out_adpcma[OUTD_CENTER];
 		rt = out_adpcma[OUTD_RIGHT] + out_adpcma[OUTD_CENTER];
 
 		lt += (out_delta[OUTD_LEFT] + out_delta[OUTD_CENTER]) >> 9;
 		rt += (out_delta[OUTD_RIGHT] + out_delta[OUTD_CENTER]) >> 9;
+#endif
 
 		lt += out_ssg;
 		rt += out_ssg;

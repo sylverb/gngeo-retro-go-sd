@@ -27,11 +27,12 @@
 #include "memory.h"
 #include "mamez80/z80.h"
 #include "state.h"
+#include "neo_mem.h"
 
 static Uint8 *z80map1, *z80map2, *z80map3, *z80map4;
 
-/* 256×256-byte views of the Z80 map — RM/ROP index once, no C call. */
-UINT8 *z80_mem_page[256];
+/* 256 page bases — allocated in DTCM (zero-wait) at cpu_z80_init. */
+UINT8 **z80_mem_page;
 
 Uint8 *mame_z80mem;
 
@@ -160,6 +161,18 @@ void cpu_z80_init(void)
         printf("z80: no cpu_z80 ROM\n");
         return;
     }
+
+    neo_dtcm_ensure();
+    if (!z80_mem_page) {
+        z80_mem_page = (UINT8 **)dtc_malloc(256 * sizeof(UINT8 *));
+        if (!neo_alloc_ok(z80_mem_page)) {
+            printf("z80: FATAL DTCM page table\n");
+            return;
+        }
+        printf("z80: DTCM page table @ %p free=%u\n",
+               (void *)z80_mem_page, (unsigned)dtc_get_free_size());
+    }
+
     z80map1 = memory.rom.cpu_z80.p + 0x8000;
     z80map2 = memory.rom.cpu_z80.p + 0xc000;
     z80map3 = memory.rom.cpu_z80.p + 0xe000;
@@ -175,7 +188,7 @@ void cpu_z80_init(void)
 
     z80_reset(NULL);
     z80_set_irq_callback(mame_z80_irq_callback);
-    printf("z80: banked page-table RM (no 64KiB mirror)\n");
+    printf("z80: banked page-table RM (DTCM, no 64KiB mirror)\n");
 }
 
 void cpu_z80_run(int nbcycle)

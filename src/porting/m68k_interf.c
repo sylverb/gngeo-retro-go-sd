@@ -198,6 +198,41 @@ static unsigned int neo_read16_cpu0(unsigned int address)
     return READ_WORD_ROM(memory.rom.cpu_m68k.p + address);
 }
 
+/* $3C0000 VRAM/regs and $400000-$41FFFF palette — no bank switch. */
+static unsigned int neo_read8_video(unsigned int address)
+{
+    return mem68k_fetch_video_byte(address & 0xFFFFFF);
+}
+static unsigned int neo_read16_video(unsigned int address)
+{
+    return mem68k_fetch_video_word(address & 0xFFFFFF);
+}
+static void neo_write8_video(unsigned int address, unsigned int data)
+{
+    mem68k_store_video_byte(address & 0xFFFFFF, (Uint8)data);
+}
+static void neo_write16_video(unsigned int address, unsigned int data)
+{
+    mem68k_store_video_word(address & 0xFFFFFF, (Uint16)data);
+}
+
+static unsigned int neo_read8_pal(unsigned int address)
+{
+    return mem68k_fetch_pal_byte(address & 0xFFFFFF);
+}
+static unsigned int neo_read16_pal(unsigned int address)
+{
+    return mem68k_fetch_pal_word(address & 0xFFFFFF);
+}
+static void neo_write8_pal(unsigned int address, unsigned int data)
+{
+    mem68k_store_pal_byte(address & 0xFFFFFF, (Uint8)data);
+}
+static void neo_write16_pal(unsigned int address, unsigned int data)
+{
+    mem68k_store_pal_word(address & 0xFFFFFF, (Uint16)data);
+}
+
 static void map_direct_rom(int bank, unsigned char *base)
 {
     m68k.memory_map[bank].base = base;
@@ -367,7 +402,20 @@ static void setup_memory_map(void)
     }
 
     remount_bank_window();
-    printf("m68k: map direct CPU/RAM/BIOS/bank (bank0 vectors via cb)\n");
+
+    /* Hot VDP / palette banks: dedicated handlers (skip neo_read* switch). */
+    m68k.memory_map[0x3c].read8 = neo_read8_video;
+    m68k.memory_map[0x3c].read16 = neo_read16_video;
+    m68k.memory_map[0x3c].write8 = neo_write8_video;
+    m68k.memory_map[0x3c].write16 = neo_write16_video;
+    for (i = 0x40; i <= 0x41; i++) {
+        m68k.memory_map[i].read8 = neo_read8_pal;
+        m68k.memory_map[i].read16 = neo_read16_pal;
+        m68k.memory_map[i].write8 = neo_write8_pal;
+        m68k.memory_map[i].write16 = neo_write16_pal;
+    }
+
+    printf("m68k: map direct CPU/RAM/BIOS/bank + dedicated $3C/$40\n");
 }
 
 void cpu_68k_init(void)
