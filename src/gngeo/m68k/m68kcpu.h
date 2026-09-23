@@ -534,14 +534,29 @@ void gwenesis_m68k_load_state(FILE *file, int ss_version);
 
 /* ----------------------------- Read / Write ----------------------------- */
 
-/* Read data immediately following the PC */
-#define m68k_read_immediate_16(address) ((*m68ki_cpu.memory_map[((address)>>16)&0xff].read16)(ADDRESS_68K(address)))
-#define m68k_read_immediate_32(address) ((unsigned int)(((*m68ki_cpu.memory_map[((address)>>16)&0xff].read16)(ADDRESS_68K(address)) << 16) | ((*m68ki_cpu.memory_map[(((address)+2)>>16)&0xff].read16)(ADDRESS_68K((address)+2)))))
+/* Read data immediately following the PC.
+ * NULL read16/read8 → direct base[] (Neo Geo LE: words native, bytes XOR1). */
+#define m68k_read_immediate_16(address) ( \
+  m68ki_cpu.memory_map[((address)>>16)&0xff].read16 \
+    ? (*m68ki_cpu.memory_map[((address)>>16)&0xff].read16)(ADDRESS_68K(address)) \
+    : (unsigned int)*(uint16 *)(m68ki_cpu.memory_map[((address)>>16)&0xff].base + ((address) & 0xffff)) )
+
+#define m68k_read_immediate_32(address) ( \
+  (unsigned int)( \
+    (m68ki_cpu.memory_map[((address)>>16)&0xff].read16 \
+      ? (*m68ki_cpu.memory_map[((address)>>16)&0xff].read16)(ADDRESS_68K(address)) \
+      : (unsigned int)*(uint16 *)(m68ki_cpu.memory_map[((address)>>16)&0xff].base + ((address) & 0xffff))) << 16 | \
+    (m68ki_cpu.memory_map[(((address)+2)>>16)&0xff].read16 \
+      ? (*m68ki_cpu.memory_map[(((address)+2)>>16)&0xff].read16)(ADDRESS_68K((address)+2)) \
+      : (unsigned int)*(uint16 *)(m68ki_cpu.memory_map[(((address)+2)>>16)&0xff].base + (((address)+2) & 0xffff))) ) )
 
 /* Read data relative to the PC */
-#define m68k_read_pcrelative_8(address)  ((*m68ki_cpu.memory_map[((address)>>16)&0xff].read8)(ADDRESS_68K(address)))
+#define m68k_read_pcrelative_8(address) ( \
+  m68ki_cpu.memory_map[((address)>>16)&0xff].read8 \
+    ? (*m68ki_cpu.memory_map[((address)>>16)&0xff].read8)(ADDRESS_68K(address)) \
+    : (unsigned int)m68ki_cpu.memory_map[((address)>>16)&0xff].base[((address) ^ 1) & 0xffff] )
 
-#define m68k_read_pcrelative_16(address) ((*m68ki_cpu.memory_map[((address)>>16)&0xff].read16)(ADDRESS_68K(address)))
+#define m68k_read_pcrelative_16(address) m68k_read_immediate_16(address)
 #define m68k_read_pcrelative_32(address) m68k_read_immediate_32(address)
 
 /* map read immediate 8 to read immediate 16 */
@@ -866,7 +881,7 @@ INLINE uint m68ki_read_8(uint address)
   m68ki_set_fc(FLAG_S | m68ki_get_address_space()) /* auto-disable (see m68kcpu.h) */
 
   if (temp->read8) val = (*temp->read8)(ADDRESS_68K(address));
-  else val = READ_BYTE(temp->base, (address) & 0xffff);
+  else val = temp->base[((address) ^ 1) & 0xffff]; /* Neo Geo LE byte lane */
 
 #ifdef HOOK_CPU
   if (cpu_hook)
@@ -933,7 +948,7 @@ INLINE void m68ki_write_8(uint address, uint value)
 
   temp = &m68ki_cpu.memory_map[((address)>>16)&0xff];
   if (temp->write8) (*temp->write8)(ADDRESS_68K(address),value);
-  else WRITE_BYTE(temp->base, (address) & 0xffff, value);
+  else temp->base[((address) ^ 1) & 0xffff] = (unsigned char)(value & 0xff);
 }
 
 INLINE void m68ki_write_16(uint address, uint value)

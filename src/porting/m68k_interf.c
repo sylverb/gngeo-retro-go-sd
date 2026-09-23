@@ -1,7 +1,10 @@
 /*
  * Musashi/gwenesis M68K wrapper — GnGeo cpu_68k_* API.
- * Memory dispatch is a switch (no 96 KiB fetch tables).
- * Opcode jump table is built once and cached in external flash.
+ *
+ * Hot paths (CPU ROM / work RAM / BIOS): memory_map.base + NULL read16 so
+ * opcode fetch is a direct uint16 load (no switch, no callback). Byte lane
+ * still uses XOR-1 via m68ki_read_8 when read8 is NULL.
+ * I/O / bankswitch / vectors keep the switch callbacks.
  */
 #include <string.h>
 #include <stdio.h>
@@ -32,6 +35,8 @@ extern unsigned char *m68ki_cycles;
 static Uint32 cycles_used;
 static Uint32 frame_cycle_base;
 
+/* ---- Slow path: I/O, cart bank, SRAM, memcard ---- */
+
 static unsigned int neo_read8(unsigned int address)
 {
     address &= 0xFFFFFF;
@@ -58,7 +63,6 @@ static unsigned int neo_read8(unsigned int address)
     case 0x3c: return mem68k_fetch_video_byte(address);
     case 0x40: case 0x41: return mem68k_fetch_pal_byte(address);
     case 0x80: return mem68k_fetch_memcrd_byte(address);
-    /* BIOS mirrors across 0xC00000-0xCFFFFF (128 KiB wrap) — UniBIOS checksum. */
     case 0xc0: case 0xc1: case 0xc2: case 0xc3:
     case 0xc4: case 0xc5: case 0xc6: case 0xc7:
     case 0xc8: case 0xc9: case 0xca: case 0xcb:
@@ -171,6 +175,29 @@ static void neo_write16(unsigned int address, unsigned int data)
     }
 }
 
+/* Bank 0: vector table overlay (BIOS ↔ game) at $000000-$00007F. */
+static unsigned int neo_read8_cpu0(unsigned int address)
+{
+    address &= 0xFFFFF;
+    if (address < 0x80) {
+        Uint8 *vp = neo_vector_patch();
+        if (vp)
+            return vp[address ^ 1];
+    }
+    return memory.rom.cpu_m68k.p[address ^ 1];
+}
+
+static unsigned int neo_read16_cpu0(unsigned int address)
+{
+    address &= 0xFFFFF;
+    if (address < 0x80) {
+        Uint8 *vp = neo_vector_patch();
+        if (vp)
+            return READ_WORD_ROM(vp + address);
+    }
+    return READ_WORD_ROM(memory.rom.cpu_m68k.p + address);
+}
+
 int mem68k_init(void) { return 0; }
 
 void cpu_68k_bankswitch(Uint32 address) { bankaddress = address; }
@@ -212,9 +239,33 @@ void neo_m68k_persist_jump_table(void)
     /* JT stays in RAM_EMU for the session — nothing to persist. */
 }
 
+static void map_direct_rom(int bank, unsigned char *base)
+{
+    m68k.memory_map[bank].base = base;
+    m68k.memory_map[bank].read8 = NULL;   /* XOR-1 in m68ki_read_8 */
+    m68k.memory_map[bank].read16 = NULL;  /* native LE word */
+    m68k.memory_map[bank].write8 = neo_write8;
+    m68k.memory_map[bank].write16 = neo_write16;
+}
+
+static void map_direct_ram(int bank, unsigned char *base)
+{
+    m68k.memory_map[bank].base = base;
+    m68k.memory_map[bank].read8 = NULL;
+    m68k.memory_map[bank].read16 = NULL;
+    m68k.memory_map[bank].write8 = NULL;  /* XOR-1 in m68ki_write_8 */
+    m68k.memory_map[bank].write16 = NULL;
+}
+
 static void setup_memory_map(void)
 {
     int i;
+    Uint8 *cpu = memory.rom.cpu_m68k.p;
+    Uint8 *bios = memory.rom.bios_m68k.p;
+    Uint32 cpu_sz = memory.rom.cpu_m68k.size;
+    Uint32 bios_sz = memory.rom.bios_m68k.size;
+
+    /* Default: switch callbacks (I/O, bankswitch, etc.). */
     for (i = 0; i < 256; i++) {
         m68k.memory_map[i].base = (unsigned char *)memory.ram;
         m68k.memory_map[i].read8 = neo_read8;
@@ -222,6 +273,40 @@ static void setup_memory_map(void)
         m68k.memory_map[i].write8 = neo_write8;
         m68k.memory_map[i].write16 = neo_write16;
     }
+
+    if (!cpu || cpu_sz < 0x10000) {
+        printf("m68k: map: no CPU ROM yet\n");
+        return;
+    }
+
+    /* $000000-$00007F: vector overlay — keep callbacks. */
+    m68k.memory_map[0].base = cpu;
+    m68k.memory_map[0].read8 = neo_read8_cpu0;
+    m68k.memory_map[0].read16 = neo_read16_cpu0;
+
+    /* $010000-$0FFFFF: direct program ROM (1 MiB window). */
+    for (i = 1; i < 16; i++) {
+        Uint32 off = (Uint32)i << 16;
+        if (off >= cpu_sz)
+            break;
+        map_direct_rom(i, cpu + off);
+    }
+
+    /* $100000-$1FFFFF: 64 KiB work RAM mirrors — direct. */
+    for (i = 0x10; i <= 0x1f; i++)
+        map_direct_ram(i, memory.ram);
+
+    /* $C00000-$CFFFFF: 128 KiB BIOS mirrors — direct. */
+    if (bios && bios_sz >= 0x10000) {
+        for (i = 0xc0; i <= 0xcf; i++) {
+            Uint32 off = ((Uint32)(i & 1)) << 16;
+            if (off >= bios_sz)
+                off = 0;
+            map_direct_rom(i, bios + off);
+        }
+    }
+
+    printf("m68k: map direct CPU/RAM/BIOS (bank0 vectors via cb)\n");
 }
 
 void cpu_68k_init(void)
