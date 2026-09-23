@@ -676,8 +676,13 @@ INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
 /***************************************************************
  * Read a byte from given memory location
  ***************************************************************/
-//#define RM(addr) (mame_z80mem[addr])
-#define RM(addr) ((UINT8)mame_z80_readmem16((UINT16)(addr)))
+/* Page-table helper lives in this TU (ITCM) — one BL, no if-ladder, no
+ * code-size blowup from macro expansion at every RM site. */
+static UINT8 z80_rm_page(UINT16 addr)
+{
+	return z80_mem_page[addr >> 8][addr & 0xff];
+}
+#define RM(addr) z80_rm_page((UINT16)(addr))
 
 /***************************************************************
  * Read a word from given memory location

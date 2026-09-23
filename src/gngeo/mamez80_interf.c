@@ -30,16 +30,38 @@
 
 static Uint8 *z80map1, *z80map2, *z80map3, *z80map4;
 
+/* 256×256-byte views of the Z80 map — RM/ROP index once, no C call. */
+UINT8 *z80_mem_page[256];
+
 Uint8 *mame_z80mem;
-//typedef struct Z80_STATE {
-//    Uint16 PC,SP,AF,BC,DE,HL,IX,IY;
-//    Uint16 AF2,BC2,DE2,HL2;
-//    Uint8  R,R2,IFF1,IFF2,IM,I;
-//    Uint8  IRQV,IRQL;
-//    Uint16 bank[4];
-//    Uint8  ram[0x800];
-//}Z80_STATE;
-//static Z80_STATE z80_st;
+
+static void z80_set_pages(int first, int last, Uint8 *base)
+{
+    int i;
+    for (i = first; i <= last; i++)
+	z80_mem_page[i] = base + ((i - first) << 8);
+}
+
+static void z80_rebuild_fixed_pages(void)
+{
+    Uint8 *rom = memory.rom.cpu_z80.p;
+    if (!rom)
+	return;
+    z80_set_pages(0x00, 0x7f, rom);
+    z80_set_pages(0xf8, 0xff, memory.z80_ram);
+}
+
+static void z80_rebuild_bank_pages(void)
+{
+    if (z80map1)
+	z80_set_pages(0x80, 0xbf, z80map1);
+    if (z80map2)
+	z80_set_pages(0xc0, 0xdf, z80map2);
+    if (z80map3)
+	z80_set_pages(0xe0, 0xef, z80map3);
+    if (z80map4)
+	z80_set_pages(0xf0, 0xf7, z80map4);
+}
 
 /* Memory and port IO handlers — banked flash/ROM access, no 64 KiB RAM mirror.
  * Device AHB heap cannot hold mame_z80mem[0x10000]; host benefits too. */
@@ -51,27 +73,17 @@ void mame_z80_writemem16(Uint16 addr, Uint8 val)
 
 Uint8 mame_z80_readmem16(Uint16 addr)
 {
-    if (addr <= 0x7fff)
-	return memory.rom.cpu_z80.p[addr];
-    if (addr <= 0xbfff)
-	return z80map1[addr - 0x8000];
-    if (addr <= 0xdfff)
-	return z80map2[addr - 0xc000];
-    if (addr <= 0xefff)
-	return z80map3[addr - 0xe000];
-    if (addr <= 0xf7ff)
-	return z80map4[addr - 0xf000];
-    return memory.z80_ram[addr - 0xf800];
+    return z80_mem_page[addr >> 8][addr & 0xff];
 }
 
 Uint8 mame_z80_readop(Uint16 addr)
 {
-    return mame_z80_readmem16(addr);
+    return z80_mem_page[addr >> 8][addr & 0xff];
 }
 
 Uint8 mame_z80_readop_arg(Uint16 addr)
 {
-    return mame_z80_readmem16(addr);
+    return z80_mem_page[addr >> 8][addr & 0xff];
 }
 
 void mame_z80_writeport16(Uint16 port, Uint8 value)
@@ -96,15 +108,19 @@ void cpu_z80_switchbank(Uint8 bank, Uint16 PortNo)
     switch (bank) {
     case 0:
 	z80map1 = memory.rom.cpu_z80.p + (0x4000 * ((PortNo >> 8) & 0x0f));
+	z80_set_pages(0x80, 0xbf, z80map1);
 	break;
     case 1:
 	z80map2 = memory.rom.cpu_z80.p + (0x2000 * ((PortNo >> 8) & 0x1f));
+	z80_set_pages(0xc0, 0xdf, z80map2);
 	break;
     case 2:
 	z80map3 = memory.rom.cpu_z80.p + (0x1000 * ((PortNo >> 8) & 0x3f));
+	z80_set_pages(0xe0, 0xef, z80map3);
 	break;
     case 3:
 	z80map4 = memory.rom.cpu_z80.p + (0x0800 * ((PortNo >> 8) & 0x7f));
+	z80_set_pages(0xf0, 0xf7, z80map4);
 	break;
     }
 }
@@ -154,9 +170,12 @@ void cpu_z80_init(void)
     z80_bank[2]=0xe000;
     z80_bank[3]=0xf000;
 
+    z80_rebuild_fixed_pages();
+    z80_rebuild_bank_pages();
+
     z80_reset(NULL);
     z80_set_irq_callback(mame_z80_irq_callback);
-    printf("z80: banked init (no 64KiB mirror)\n");
+    printf("z80: banked page-table RM (no 64KiB mirror)\n");
 }
 
 void cpu_z80_run(int nbcycle)

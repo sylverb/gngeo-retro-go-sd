@@ -147,7 +147,8 @@ extern const char *z80_info(void *context, int regnum);
 extern unsigned z80_dasm(char *buffer, unsigned pc);
 
 
-/* interface */
+/* interface — page table for hot RM/ROP (see mamez80_interf.c) */
+extern UINT8 *z80_mem_page[256];
 extern void mame_z80_writemem16(UINT16 addr,UINT8 val);
 extern UINT8 mame_z80_readmem16(UINT16 addr);
 extern UINT8 mame_z80_readop(UINT16 addr);
