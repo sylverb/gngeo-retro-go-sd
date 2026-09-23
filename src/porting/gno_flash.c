@@ -27,7 +27,7 @@
 #include "gw_core_bridge.h"
 #include "gw_lcd.h"
 #include "rg_storage.h"
-#include "main.h" /* SCB_InvalidateDCache — CMSIS via HAL */
+#include "main.h" /* SCB_CleanInvalidateDCache — CMSIS via HAL */
 #endif
 
 int neogeo_fix_bank_type = 0;
@@ -72,12 +72,14 @@ static void gno_set_err(const char *msg)
  * cacheable by default MPU map, so a freshly written .gno / BIOS blob can
  * still be read as the previous occupant of that address until the cache
  * is dropped. Quit→relaunch works because NVIC_SystemReset clears it.
- * Full invalidate is O(D-cache size), not O(file size) — right for multi-MB
- * XIP ROMs.
+ *
+ * Must Clean+Invalidate (not Invalidate alone): RAM_EMU / FatFS live in
+ * write-back AXI SRAM — a bare Invalidate drops dirty lines and breaks
+ * later SD opens ("missing BIOS files").
  */
 static void neo_xip_sync(void)
 {
-    SCB_InvalidateDCache();
+    SCB_CleanInvalidateDCache();
     __DSB();
     __ISB();
 }
