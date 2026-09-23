@@ -66,6 +66,13 @@ CORE_C_DEFS := \
 #   make CORE_C_DEFS+=-DNEO_DISABLE_YM2610=1   → silence YM synth
 #   make CORE_C_DEFS+=-DNEO_YM_EARLYOUT=0      → stock YM loop (no early-outs)
 #   make CORE_C_DEFS+=-DNEO_DISABLE_VIDEO=1    → no draw/present (audio A/B)
+# Host BIOS scout / frame profiler:
+#   ./neogeo_host --bios-trace rom.gno
+#   ./neogeo_host --prof rom.gno
+#   NEO_BIOS_TRACE_EVERY=120 NEO_BIOS_TRACE_VERBOSE=1 ./neogeo_host --bios-trace rom.gno
+#   NEO_PROF_EVERY=120 ./neogeo_host --prof rom.gno
+# Next perf leads (if still short after present/clear/bank-window):
+#   flatten Z80 RM/ROP; stub draw_tile_50/25; ADPCM early-out; Z80 66667
 #CORE_C_DEFS += -DNEO_DISABLE_YM2610=1
 #CORE_C_DEFS += -DNEO_DISABLE_VIDEO=1
 

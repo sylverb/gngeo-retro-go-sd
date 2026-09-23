@@ -21,11 +21,15 @@
 #include "gw_malloc.h"
 #include "neo_mem.h"
 #include "gngeo_platform.h"
+#include "profiler.h"
 
 #ifndef HOST_BUILD
 #include "gw_lcd.h"
 #include "odroid_audio.h"
 #include "gw_core_bridge.h"
+
+static int neo_dma2d_fill(uint16_t *dst, uint16_t w, uint16_t h,
+                          uint16_t dst_off, uint16_t color);
 #else
 #include "odroid_audio.h"
 #endif
@@ -122,7 +126,12 @@ int SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, Uint32 color)
 {
     SDL_Rect r;
     Uint16 *p;
-    int x, y;
+    Uint16 c16;
+    Uint32 c32;
+    int x, y, w;
+#ifndef HOST_BUILD
+    uint16_t *fb;
+#endif
     if (!dst || !dst->pixels)
         return -1;
     if (dstrect)
@@ -130,10 +139,35 @@ int SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, Uint32 color)
     else {
         r.x = 0; r.y = 0; r.w = (Uint16)dst->w; r.h = (Uint16)dst->h;
     }
+    if (r.w <= 0 || r.h <= 0)
+        return 0;
+    c16 = (Uint16)color;
+
+#ifndef HOST_BUILD
+    /* Device LCD FB: DMA2D R2M for full-width clears (draw_screen backdrop). */
+    fb = lcd_get_active_buffer();
+    if (fb && dst->pixels == (void *)fb && dst->pitch == 640 &&
+        r.x == 0 && r.w == 320) {
+        if (neo_dma2d_fill(fb + (int)r.y * 320, 320, (uint16_t)r.h, 0, c16) == 0)
+            return 0;
+        /* fall through to CPU fill */
+    }
+#endif
+
+    c32 = ((Uint32)c16 << 16) | (Uint32)c16;
     for (y = 0; y < r.h; y++) {
         p = (Uint16 *)((Uint8 *)dst->pixels + (r.y + y) * dst->pitch) + r.x;
-        for (x = 0; x < r.w; x++)
-            p[x] = (Uint16)color;
+        w = r.w;
+        x = 0;
+        if ((((uintptr_t)p) & 3) == 0) {
+            Uint32 *p32 = (Uint32 *)p;
+            int n32 = w >> 1;
+            for (x = 0; x < n32; x++)
+                p32[x] = c32;
+            x = n32 << 1;
+        }
+        for (; x < w; x++)
+            p[x] = c16;
     }
     return 0;
 }
@@ -255,7 +289,8 @@ int screen_init(void)
     /*
      * Device: draw straight into the 320×240 LCD FB. No 16px gutter —
      * that cropped the right edge 16px early vs host's 352-wide buffer.
-     * Full 320×224 viewport, 8px letterbox top/bottom only.
+     * y=8 so the 224-line viewport already sits on the letterboxed panel
+     * (dst_y=8) — present skips a 140 KiB memmove and only fills bars.
      */
     conf.screen320 = 1;
     buffer = alloc_lcd_surface();
@@ -263,7 +298,7 @@ int screen_init(void)
     if (!buffer)
         return GN_FALSE;
     visible_area.x = 0;
-    visible_area.y = 16;
+    visible_area.y = 8;
     visible_area.w = 320;
     visible_area.h = 224;
 #endif
@@ -286,11 +321,13 @@ void neo_bind_lcd_buffer(void)
 }
 
 /* DMA2D solid fill (RGB565). Returns 0 on success. */
-static int neo_dma2d_fill(uint16_t *dst, uint16_t w, uint16_t h, uint16_t dst_off)
+static int neo_dma2d_fill(uint16_t *dst, uint16_t w, uint16_t h,
+                          uint16_t dst_off, uint16_t color)
 {
     if (!dst || w == 0 || h == 0)
         return 0;
-    if (dma2d_r2m_rgb565_start(0, (uint32_t)(uintptr_t)dst, w, h, dst_off) != 0)
+    if (dma2d_r2m_rgb565_start((uint32_t)color, (uint32_t)(uintptr_t)dst,
+                               w, h, dst_off) != 0)
         return -1;
     return dma2d_poll(50) == 0 ? 0 : -1;
 }
@@ -336,17 +373,17 @@ static void neo_letterbox(uint16_t *fb, int dst_x, int dst_y, int vw, int vh)
     const int right_w = 320 - dst_x - vw;
 
     if (dst_y > 0)
-        ok = ok && neo_dma2d_fill(fb, 320, (uint16_t)dst_y, 0) == 0;
+        ok = ok && neo_dma2d_fill(fb, 320, (uint16_t)dst_y, 0, 0) == 0;
     if (ok && bot_h > 0)
         ok = ok && neo_dma2d_fill(fb + (dst_y + vh) * 320, 320,
-                                  (uint16_t)bot_h, 0) == 0;
+                                  (uint16_t)bot_h, 0, 0) == 0;
     if (ok && dst_x > 0)
         ok = ok && neo_dma2d_fill(fb + dst_y * 320, (uint16_t)dst_x,
-                                  (uint16_t)vh, (uint16_t)(320 - dst_x)) == 0;
+                                  (uint16_t)vh, (uint16_t)(320 - dst_x), 0) == 0;
     if (ok && right_w > 0)
         ok = ok && neo_dma2d_fill(fb + dst_y * 320 + dst_x + vw,
                                   (uint16_t)right_w, (uint16_t)vh,
-                                  (uint16_t)(dst_x + vw)) == 0;
+                                  (uint16_t)(dst_x + vw), 0) == 0;
     if (!ok)
         neo_cpu_letterbox(fb, dst_x, dst_y, vw, vh);
 }
@@ -395,7 +432,7 @@ void neo_present_to_lcd(uint16_t *fb)
                               src_y * 320 + src_x;
         uint16_t *dst = fb + dst_y * 320 + dst_x;
 
-        if (neo_dma2d_fill(fb, 320, 240, 0) != 0)
+        if (neo_dma2d_fill(fb, 320, 240, 0, 0) != 0)
             memset(fb, 0, 320 * 240 * 2);
         if (neo_dma2d_blit(src, dst, (uint16_t)vw, (uint16_t)vh) != 0) {
             for (y = 0; y < vh; y++) {
@@ -472,6 +509,7 @@ void neo_render_audio(int16_t *dst, int len)
     if (n > (BUFFER_LEN / 2))
         n = BUFFER_LEN / 2;
 
+    PROFILER_START(PROF_SOUND);
     YM2610Update_stream(n);
     for (i = 0; i < n; i++) {
         int32_t l = (int16_t)play_buffer[i * 2];
@@ -481,6 +519,7 @@ void neo_render_audio(int16_t *dst, int len)
         if (s < -32768) s = -32768;
         dst[i] = (int16_t)s;
     }
+    PROFILER_STOP(PROF_SOUND);
     for (; i < len; i++)
         dst[i] = 0;
 }

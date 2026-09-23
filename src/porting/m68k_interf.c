@@ -1,10 +1,10 @@
 /*
  * Musashi/gwenesis M68K wrapper — GnGeo cpu_68k_* API.
  *
- * Hot paths (CPU ROM / work RAM / BIOS): memory_map.base + NULL read16 so
- * opcode fetch is a direct uint16 load (no switch, no callback). Byte lane
- * still uses XOR-1 via m68ki_read_8 when read8 is NULL.
- * I/O / bankswitch / vectors keep the switch callbacks.
+ * Hot paths (CPU ROM / work RAM / BIOS / cart bank window): memory_map.base
+ * + NULL read16 so opcode fetch is a direct uint16 load. Byte lane still
+ * uses XOR-1 via m68ki_read_8 when read8 is NULL. SMA bankswitch keeps
+ * read callbacks; I/O / vectors keep the switch callbacks.
  */
 #include <string.h>
 #include <stdio.h>
@@ -198,11 +198,89 @@ static unsigned int neo_read16_cpu0(unsigned int address)
     return READ_WORD_ROM(memory.rom.cpu_m68k.p + address);
 }
 
-int mem68k_init(void) { return 0; }
+static void map_direct_rom(int bank, unsigned char *base)
+{
+    m68k.memory_map[bank].base = base;
+    m68k.memory_map[bank].read8 = NULL;   /* XOR-1 in m68ki_read_8 */
+    m68k.memory_map[bank].read16 = NULL;  /* native LE word */
+    m68k.memory_map[bank].write8 = neo_write8;
+    m68k.memory_map[bank].write16 = neo_write16;
+}
 
-void cpu_68k_bankswitch(Uint32 address) { bankaddress = address; }
+static void map_direct_ram(int bank, unsigned char *base)
+{
+    m68k.memory_map[bank].base = base;
+    m68k.memory_map[bank].read8 = NULL;
+    m68k.memory_map[bank].read16 = NULL;
+    m68k.memory_map[bank].write8 = NULL;  /* XOR-1 in m68ki_write_8 */
+    m68k.memory_map[bank].write16 = NULL;
+}
+
+/*
+ * $200000-$2FFFFF cart bank window. Normal games: remount base so fetches
+ * are direct uint16 loads. SMA / scrambled bankswitch keeps read callbacks
+ * (prot word @ $2fe446 + RNG). Writes always stay on neo_write* (bank latch).
+ */
+static void remount_bank_window(void)
+{
+    int i;
+    Uint8 *cpu = memory.rom.cpu_m68k.p;
+    Uint32 cpu_sz = memory.rom.cpu_m68k.size;
+    Uint32 base_off = bankaddress;
+
+    if (!cpu || cpu_sz <= 0x100000) {
+        for (i = 0x20; i <= 0x2f; i++) {
+            m68k.memory_map[i].base = cpu ? cpu : (unsigned char *)memory.ram;
+            m68k.memory_map[i].read8 = neo_read8;
+            m68k.memory_map[i].read16 = neo_read16;
+            m68k.memory_map[i].write8 = neo_write8;
+            m68k.memory_map[i].write16 = neo_write16;
+        }
+        return;
+    }
+
+    if (base_off >= cpu_sz)
+        base_off = 0x100000;
+    if (base_off >= cpu_sz)
+        base_off = 0;
+
+    if (memory.bksw_unscramble) {
+        /* SMA: prot/RNG reads need the C fetch path. */
+        for (i = 0x20; i <= 0x2f; i++) {
+            m68k.memory_map[i].base = cpu + base_off + (((Uint32)(i - 0x20)) << 16);
+            m68k.memory_map[i].read8 = neo_read8;
+            m68k.memory_map[i].read16 = neo_read16;
+            m68k.memory_map[i].write8 = neo_write8;
+            m68k.memory_map[i].write16 = neo_write16;
+        }
+        return;
+    }
+
+    for (i = 0x20; i <= 0x2f; i++) {
+        Uint32 off = base_off + (((Uint32)(i - 0x20)) << 16);
+        if (off + 0x10000u > cpu_sz) {
+            m68k.memory_map[i].base = cpu;
+            m68k.memory_map[i].read8 = neo_read8;
+            m68k.memory_map[i].read16 = neo_read16;
+        } else {
+            map_direct_rom(i, cpu + off);
+            continue;
+        }
+        m68k.memory_map[i].write8 = neo_write8;
+        m68k.memory_map[i].write16 = neo_write16;
+    }
+}
+
+void cpu_68k_bankswitch(Uint32 address)
+{
+    bankaddress = address;
+    remount_bank_window();
+}
+
 void cpu_68k_reset(void) { m68k_pulse_reset(); }
 void cpu_68k_mkstate(gzFile gzf, int mode) { (void)gzf; (void)mode; }
+
+int mem68k_init(void) { return 0; }
 
 /*
  * Prepare Musashi opcode jump table (256 KiB of absolute fn pointers) in
@@ -237,24 +315,6 @@ int neo_m68k_prepare_jump_table(void)
 void neo_m68k_persist_jump_table(void)
 {
     /* JT stays in RAM_EMU for the session — nothing to persist. */
-}
-
-static void map_direct_rom(int bank, unsigned char *base)
-{
-    m68k.memory_map[bank].base = base;
-    m68k.memory_map[bank].read8 = NULL;   /* XOR-1 in m68ki_read_8 */
-    m68k.memory_map[bank].read16 = NULL;  /* native LE word */
-    m68k.memory_map[bank].write8 = neo_write8;
-    m68k.memory_map[bank].write16 = neo_write16;
-}
-
-static void map_direct_ram(int bank, unsigned char *base)
-{
-    m68k.memory_map[bank].base = base;
-    m68k.memory_map[bank].read8 = NULL;
-    m68k.memory_map[bank].read16 = NULL;
-    m68k.memory_map[bank].write8 = NULL;  /* XOR-1 in m68ki_write_8 */
-    m68k.memory_map[bank].write16 = NULL;
 }
 
 static void setup_memory_map(void)
@@ -306,7 +366,8 @@ static void setup_memory_map(void)
         }
     }
 
-    printf("m68k: map direct CPU/RAM/BIOS (bank0 vectors via cb)\n");
+    remount_bank_window();
+    printf("m68k: map direct CPU/RAM/BIOS/bank (bank0 vectors via cb)\n");
 }
 
 void cpu_68k_init(void)
@@ -362,7 +423,7 @@ void cpu_68k_init(void)
     }
 #endif
     setup_memory_map();
-    bankaddress = 0;
+    cpu_68k_bankswitch(0);
     m68k.cycles = 0;
     m68k_pulse_reset();
 }
