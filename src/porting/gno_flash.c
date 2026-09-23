@@ -27,6 +27,7 @@
 #include "gw_core_bridge.h"
 #include "gw_lcd.h"
 #include "rg_storage.h"
+#include "main.h" /* SCB_InvalidateDCache — CMSIS via HAL */
 #endif
 
 int neogeo_fix_bank_type = 0;
@@ -64,6 +65,23 @@ static void gno_set_err(const char *msg)
     }
     gno_err[n] = 0;
 }
+
+#ifndef HOST_BUILD
+/*
+ * OSPI program/erase bypasses the D-cache. Extflash (0x9…) is Normal
+ * cacheable by default MPU map, so a freshly written .gno / BIOS blob can
+ * still be read as the previous occupant of that address until the cache
+ * is dropped. Quit→relaunch works because NVIC_SystemReset clears it.
+ * Full invalidate is O(D-cache size), not O(file size) — right for multi-MB
+ * XIP ROMs.
+ */
+static void neo_xip_sync(void)
+{
+    SCB_InvalidateDCache();
+    __DSB();
+    __ISB();
+}
+#endif
 
 /* From GnGeo roms.c — convert SFIX bitplanes (board BIOS). Unused at
  * runtime when make_gno_xip.py / gngeo --dump already converted SFIX. */
@@ -374,6 +392,7 @@ static int device_map_file(const char *path, Uint8 **out, uint32_t *out_size)
     p = odroid_overlay_cache_file_in_flash(path, &sz, false);
     if (!p || sz == 0)
         return GN_FALSE;
+    neo_xip_sync();
     *out = p;
     *out_size = sz;
     return GN_TRUE;
@@ -423,6 +442,7 @@ static int device_ensure_le_bios(Uint8 **pp, uint32_t *psz)
     wdog_refresh();
     if (!store_data_in_flash(key, scratch, nbytes))
         return GN_FALSE;
+    neo_xip_sync();
     q = lookup_data_in_flash(key, &got);
     if (!q || got != nbytes)
         return GN_FALSE;
@@ -458,6 +478,7 @@ static int device_ensure_converted_sfix(Uint8 **pp, uint32_t *psz)
     wdog_refresh();
     if (!store_data_in_flash(key, scratch, n))
         return GN_FALSE;
+    neo_xip_sync();
     q = lookup_data_in_flash(key, &got);
     if (!q || got != n)
         return GN_FALSE;
@@ -618,8 +639,16 @@ static int parse_region(const uint8_t **pp, GAME_ROMS *roms)
         return GN_FALSE;
     }
 
-    if (type == 0)
-        return bind_region(r, size, pp);
+    if (type == 0) {
+        if (!bind_region(r, size, pp)) {
+            printf("gno: region id=%u size=%lu past end (off=%lu/%lu)\n",
+                   lid, (unsigned long)size,
+                   (unsigned long)(*pp - gno_base),
+                   (unsigned long)gno_size);
+            return GN_FALSE;
+        }
+        return GN_TRUE;
+    }
 
 #ifdef HOST_BUILD
     if (type == 1)
@@ -666,6 +695,12 @@ int gno_flash_load(const char *path)
         gno_set_err("flash cache failed");
         return GN_FALSE;
     }
+#ifndef HOST_BUILD
+    /* Drop stale D-cache lines left from a previous XIP occupant of this
+     * address (circular flash rewrite). Without this, the first boot after
+     * "Caching game…" can parse garbage → "bad .gno region". */
+    neo_xip_sync();
+#endif
 
     gno_base = mapped;
     gno_size = size;
