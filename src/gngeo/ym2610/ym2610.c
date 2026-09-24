@@ -3246,6 +3246,10 @@ void YM2610Update_SoundTest(int p)
 }
 #endif
 
+#ifndef HOST_BUILD
+void ym2610_mkstate(gzFile gzf, int mode) __attribute__((section(".neo_flash"), noinline));
+#endif
+
 void ym2610_mkstate(gzFile gzf, int mode) {
 	int r;
 	/* Old save state version was buggy, tried to load it anyway

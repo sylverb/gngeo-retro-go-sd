@@ -23691,8 +23691,14 @@ typedef struct
 /* opcode handler jump table — allocated / flash-mapped at init */
 void (**m68ki_instruction_jump_table)(void);
 
-/* Opcode handler table */
-static const opcode_handler_struct m68k_opcode_handler_table[] =
+/* Opcode handler table — cold: only walked once at m68k_init to fill the JT.
+ * Lives in the neogeo.ro flash sidecar (see ld/neogeo_core.ld .neo_flash). */
+#ifndef HOST_BUILD
+#define NEO_FLASH_RODATA __attribute__((section(".neo_flash"), aligned(4)))
+#else
+#define NEO_FLASH_RODATA
+#endif
+static const opcode_handler_struct m68k_opcode_handler_table[] NEO_FLASH_RODATA =
 {
 /*   function                      mask    match  cyc */
   {m68k_op_1010                , 0xf000, 0xa000,  4},

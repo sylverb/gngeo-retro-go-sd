@@ -20,6 +20,7 @@ CORE_C_SOURCES := \
 $(PORT)/gngeo_platform.c \
 $(PORT)/neo_mem.c \
 $(PORT)/gno_flash.c \
+$(PORT)/neo_flash_ro.c \
 $(PORT)/neo_frame.c \
 $(PORT)/event.c \
 $(PORT)/conf_stub.c \
@@ -85,6 +86,7 @@ CORE_C_DEFS += \
 -DCHEAT_CODES=0
 
 PACKED_BIN  := $(CORE_NAME).bin
+RO_BIN      := $(CORE_NAME).ro
 PAD_LOGO    := src/assets/pad.png
 HEADER_LOGO := src/assets/header.png
 else
@@ -98,8 +100,13 @@ include $(GNW_CORE_SDK)/Makefile
 PACK_CORE := $(GNW_CORE_SDK)/tools/pack_core.py
 CORE_VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo NOTAG)
 
+# Cold .text/.rodata sidecar (linked at 0xCAFE0000 → QSPI via overlay cache).
+$(RO_BIN): $(TARGET_ELF)
+	$(V)$(ECHO) [ RO ] $(RO_BIN)
+	$(V)$(CP) -O binary --only-section=.neo_flash $< $@
+
 .PHONY: pack
-pack: $(TARGET_BIN) $(PAD_LOGO) $(HEADER_LOGO)
+pack: $(TARGET_BIN) $(RO_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 	$(V)$(ECHO) [ PACK CORE ] $(PACKED_BIN) version=$(CORE_VERSION)
 	$(V)python3 $(PACK_CORE) \
 		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
@@ -114,12 +121,14 @@ pack: $(TARGET_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 
 all: pack
 
-.PHONY: print-PROJECT_KIND print-PACKED_BIN print-CORE_NAME print-DOCKER_IMAGE \
+.PHONY: print-PROJECT_KIND print-PACKED_BIN print-RO_BIN print-CORE_NAME print-DOCKER_IMAGE \
 	print-TARGET_ELF print-TARGET_MAP print-CORE_VERSION
 print-PROJECT_KIND:
 	@echo $(PROJECT_KIND)
 print-PACKED_BIN:
 	@echo $(PACKED_BIN)
+print-RO_BIN:
+	@echo $(RO_BIN)
 print-CORE_NAME:
 	@echo $(CORE_NAME)
 print-DOCKER_IMAGE:
@@ -132,7 +141,7 @@ print-CORE_VERSION:
 	@echo $(CORE_VERSION)
 
 clean::
-	$(V)rm -f $(PACKED_BIN)
+	$(V)rm -f $(PACKED_BIN) $(RO_BIN)
 
 .PHONY: docker docker_pull docker_shell
 

@@ -719,6 +719,16 @@ uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *fil
     return buf;
 }
 
+uint8_t *odroid_overlay_cache_file_in_flash_relocate(
+    const char *file_path, uint32_t *file_size_p, bool byte_swap,
+    void (*relocate_cb)(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                        uint8_t *file_address, uint32_t file_size))
+{
+    /* Host maps into malloc — no QSPI. Device-only CAFE rebase skipped. */
+    (void)relocate_cb;
+    return odroid_overlay_cache_file_in_flash(file_path, file_size_p, byte_swap);
+}
+
 size_t odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_address)
 {
     FILE *f;

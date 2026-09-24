@@ -6,6 +6,7 @@ GPL-licensed Neo Geo AES/MVS emulator core for
 | | |
 |--|--|
 | Packed binary | `neogeo.bin` → `/cores/neogeo.bin` |
+| Cold sidecar | `neogeo.ro` → `/cores/neogeo.ro` (required — init/savestate/tables) |
 | ROMs | `/roms/neogeo/*.gno` (XIP tiles — see below) |
 | BIOS | `/bios/neogeo/` (shared, not inside each `.gno`) |
 | Entry | `app_main_neogeo` |
@@ -18,10 +19,14 @@ Based on [GnGeo](https://github.com/pepone42/gngeo) with a Musashi/gwenesis
 ## Build
 
 ```bash
-make            # → neogeo.bin (device)
+make            # → neogeo.bin + neogeo.ro (device)
 make docker
 make host       # → neogeo_host (desktop SDL2)
 ```
+
+Copy **both** `neogeo.bin` and `neogeo.ro` to `/cores/` on the SD. The `.ro`
+sidecar holds cold `.text`/`.rodata` (linked at `0xCAFE…`, mapped into QSPI
+and rebased at boot — same pattern as Zelda 3’s `zelda3.ro`).
 
 ## BIOS files (device + host)
 
@@ -65,6 +70,7 @@ python3 tools/make_gno_xip.py maglord.gno -o maglord.gno
 
 ```text
 /cores/neogeo.bin
+/cores/neogeo.ro
 /roms/neogeo/maglord.gno
 /bios/neogeo/uni-bios.rom
 /bios/neogeo/sfix.sfix

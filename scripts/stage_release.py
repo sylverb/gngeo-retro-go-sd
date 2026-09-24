@@ -2,7 +2,8 @@
 """Stage Retro-Go SD release assets for the active project kind.
 
 Reads PROJECT_KIND and PACKED_BIN from the root Makefile, builds:
-  1. SD install zip:   <stem>-<tag>.zip       → cores|homebrews/<packed.bin>
+  1. SD install zip:   <stem>-<tag>.zip       → homebrews|cores/<packed.bin>
+                                               (+ optional RO_BIN sidecar)
   2. Debug symbols zip: <stem>-<tag>-debug.zip → ELF, map, README
 
 Extracts release notes from CHANGELOG.md for the requested tag.
@@ -31,6 +32,7 @@ DEBUG_README = ROOT / "scripts" / "DEBUG_README.md"
 MAKE_VARS = (
     "PROJECT_KIND",
     "PACKED_BIN",
+    "RO_BIN",
     "CORE_NAME",
     "DOCKER_IMAGE",
     "TARGET_ELF",
@@ -124,6 +126,7 @@ def build_release_notes(
     docker_image: str,
     archive_name: str,
     debug_archive_name: str,
+    ro_name: str | None = None,
 ) -> str:
     sdk_version = (ROOT / "SDK_VERSION").read_text(encoding="utf-8").strip()
     install_path = f"/{sd_dir}/{packed_name}"
@@ -138,28 +141,38 @@ def build_release_notes(
         f"- Project kind: `{project_kind}`",
         f"- Packed binary: `{packed_name}`",
         f"- SD install path: `{install_path}`",
-        f"- Release archive: `{archive_name}` (unzip onto the SD root)",
-        f"- Debug archive: `{debug_archive_name}` (ELF + linker map)",
-        f"- Built with: `{docker_image}`",
-        "",
-        "Crash PC/LR → source (needs `arm-none-eabi-addr2line`):",
-        "",
-        "```bash",
-        f"unzip {debug_archive_name}",
-        "arm-none-eabi-addr2line -e <name>_core.elf -f -C -a 0x<PC> 0x<LR>",
-        "```",
-        "",
-        "Or from a checkout of this repo: `python3 scripts/resolve_addr.py --elf …`",
-        "",
-        "```",
-        sdk_version,
-        "```",
     ]
+    if ro_name:
+        lines.append(f"- Rodata sidecar: `/{sd_dir}/{ro_name}` (included in the install zip)")
+    lines.extend(
+        [
+            f"- Release archive: `{archive_name}` (unzip onto the SD root)",
+            f"- Debug archive: `{debug_archive_name}` (ELF + linker map)",
+            f"- Built with: `{docker_image}`",
+            "",
+            "Crash PC/LR → source (needs `arm-none-eabi-addr2line`):",
+            "",
+            "```bash",
+            f"unzip {debug_archive_name}",
+            "arm-none-eabi-addr2line -e <name>_core.elf -f -C -a 0x<PC> 0x<LR>",
+            "```",
+            "",
+            "Or from a checkout of this repo: `python3 scripts/resolve_addr.py --elf …`",
+            "",
+            "```",
+            sdk_version,
+            "```",
+        ]
+    )
     if project_kind == "core":
         lines.append(f"- Test ROMs: `/roms/{core_name}/`")
     else:
         stem = Path(packed_name).stem
         lines.append(f"- Optional cover: `/covers/homebrew/{stem}.img`")
+        lines.append(
+            "- Game assets (`zelda3_assets.dat`) are not in this zip — extract from a "
+            "ROM (see README) and place under `/homebrews/`."
+        )
 
     return "\n".join(lines) + "\n"
 
@@ -181,10 +194,12 @@ def stage_release(
     docker_image: str | None,
     elf_path: Path | None,
     map_path: Path | None,
+    ro_path: Path | None,
 ) -> None:
     cfg = read_make_vars()
     project_kind = cfg["PROJECT_KIND"]
     packed_name = cfg["PACKED_BIN"]
+    ro_name = (cfg.get("RO_BIN") or "").strip()
     core_name = cfg["CORE_NAME"]
     resolved_docker = docker_image or cfg.get("DOCKER_IMAGE") or "sylverb/retro-go-sd-builder:v1.5"
 
@@ -205,6 +220,17 @@ def stage_release(
     if not DEBUG_README.is_file():
         raise SystemExit(f"debug readme not found: {DEBUG_README}")
 
+    sd_ro: Path | None = None
+    if ro_name:
+        resolved_ro = ro_path or (ROOT / ro_name)
+        if not resolved_ro.is_absolute():
+            resolved_ro = ROOT / resolved_ro
+        if not resolved_ro.is_file():
+            raise SystemExit(
+                f"rodata sidecar RO_BIN={ro_name!r} not found: {resolved_ro}"
+            )
+        sd_ro = resolved_ro
+
     changelog_body = extract_changelog_section(changelog_path, tag)
 
     sd_dir = sd_subdir(project_kind)
@@ -215,12 +241,18 @@ def stage_release(
     sd_bin = sd_root / packed_name
     shutil.copy2(bin_path, sd_bin)
 
+    zip_members: list[tuple[Path, str]] = [(sd_bin, f"{sd_dir}/{packed_name}")]
+    if sd_ro is not None and ro_name:
+        staged_ro = sd_root / ro_name
+        shutil.copy2(sd_ro, staged_ro)
+        zip_members.append((staged_ro, f"{sd_dir}/{ro_name}"))
+
     stem = Path(packed_name).stem
     tag_slug = slug(tag)
 
     archive_name = f"{stem}-{tag_slug}.zip"
     archive_path = out_dir / archive_name
-    write_zip(archive_path, [(sd_bin, f"{sd_dir}/{packed_name}")])
+    write_zip(archive_path, zip_members)
 
     debug_archive_name = f"{stem}-{tag_slug}-debug.zip"
     debug_archive_path = out_dir / debug_archive_name
@@ -245,6 +277,7 @@ def stage_release(
             docker_image=resolved_docker,
             archive_name=archive_name,
             debug_archive_name=debug_archive_name,
+            ro_name=ro_name or None,
         ),
         encoding="utf-8",
     )
@@ -261,6 +294,9 @@ def stage_release(
     print(f"project_kind={project_kind}")
     print(f"packed_bin={packed_name}")
     print(f"sd_path=/{sd_dir}/{packed_name}")
+    if ro_name:
+        print(f"ro_bin={ro_name}")
+        print(f"ro_path=/{sd_dir}/{ro_name}")
     print(f"archive={archive_path}")
     print(f"debug_archive={debug_archive_path}")
     print(f"notes={notes_path}")
@@ -286,6 +322,12 @@ def main() -> None:
         dest="map_path",
         type=Path,
         help="linker map (default: TARGET_MAP from Makefile)",
+    )
+    parser.add_argument(
+        "--ro",
+        dest="ro_path",
+        type=Path,
+        help="optional rodata sidecar (default: RO_BIN from Makefile when set)",
     )
     parser.add_argument("--tag", required=True, help="release tag (e.g. v1.0.0)")
     parser.add_argument(
@@ -323,6 +365,7 @@ def main() -> None:
         docker_image=args.docker_image,
         elf_path=args.elf_path,
         map_path=args.map_path,
+        ro_path=args.ro_path,
     )
 
 

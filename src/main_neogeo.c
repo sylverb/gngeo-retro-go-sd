@@ -39,6 +39,7 @@
 #include "neogeo_i18n.h"
 #include "video.h"
 #include "neo_state.h"
+#include "neo_flash_ro.h"
 #include "ym2610/ym2610.h"
 
 extern void (**m68ki_instruction_jump_table)(void);
@@ -234,6 +235,25 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     gw_core_bridge_init();
     memset(&pad, 0, sizeof(pad));
+
+#ifndef HOST_BUILD
+    /* Map cold .text/.rodata into QSPI and rebase CAFE pointers in RAM_EMU
+     * before any call into neo_state / gno_flash / neocrypt / … */
+    if (!neo_load_flash_cold()) {
+        boot_fail_reason = "missing neogeo.ro";
+        uint16_t *fb = lcd_get_active_buffer();
+        if (fb) {
+            memset(fb, 0, WIDTH * HEIGHT * 2);
+            odroid_overlay_draw_text(8, 8, 0, "Neo Geo: missing neogeo.ro", 0xFFFF, 0);
+            odroid_overlay_draw_text(8, 28, 0, "Copy /cores/neogeo.ro", 0xFFFF, 0);
+            lcd_swap();
+        }
+        while (1) {
+            wdog_refresh();
+            odroid_input_read_gamepad(&joystick);
+        }
+    }
+#endif
 
     if (start_paused) {
         common_emu_state.pause_after_frames = 2;
