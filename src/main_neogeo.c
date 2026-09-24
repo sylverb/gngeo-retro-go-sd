@@ -84,13 +84,24 @@ static void neo_repaint(void)
     common_ingame_overlay();
 }
 
-static void Shutdown(void) {}
+/* Like gwenesis: boost to OC lvl 2 only when the launcher setting is stock
+ * (0). Do not override OC 1/2/3 the user already chose. Not persisted. */
+static void neo_apply_cpu_clock(void)
+{
+    if (odroid_settings_cpu_oc_level_get() == 0)
+        SystemClock_Config(2);
+}
 
 static void SleepWake(void)
 {
-    odroid_audio_init(SAMPLE_RATE);
-    audio_clear_buffers();
-    audio_start_playing(AUDIO_LENGTH);
+    /* gw_sleep restores the settings OC; re-boost when we had auto-forced
+     * lvl 2, and rebuild SAI (SystemClock_Config reprograms the audio PLL). */
+    if (odroid_settings_cpu_oc_level_get() == 0) {
+        SystemClock_Config(2);
+        odroid_audio_init(SAMPLE_RATE);
+        audio_clear_buffers();
+        audio_start_playing(AUDIO_LENGTH);
+    }
 }
 
 static void SramSave(void)
@@ -227,13 +238,11 @@ static bool boot_game(void)
 
 void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    // Set the clock to 3 (300MHz)
-    SystemClock_Config(3);
-
     odroid_gamepad_state_t joystick;
     odroid_dialog_choice_t options[1];
 
     gw_core_bridge_init();
+    neo_apply_cpu_clock();
     memset(&pad, 0, sizeof(pad));
 
 #ifndef HOST_BUILD
@@ -266,7 +275,7 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APP_ID, SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot,
-                           &Shutdown, &SleepWake, &SramSave, NULL);
+                           NULL, &SleepWake, &SramSave, NULL);
 
     options[0] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
 

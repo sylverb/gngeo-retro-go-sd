@@ -876,6 +876,9 @@ void odroid_settings_app_int32_set(const char *key, int32_t value)
         settings_beep = value;
 }
 
+uint8_t odroid_settings_cpu_oc_level_get(void) { return 0; }
+void odroid_settings_cpu_oc_level_set(uint8_t oc) { (void)oc; }
+
 bool odroid_settings_ActiveGameGenieCodes_is_enabled(char *game_path, int code_index)
 {
     (void)game_path;
