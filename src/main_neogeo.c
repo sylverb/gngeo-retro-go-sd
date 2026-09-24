@@ -38,7 +38,10 @@
 #include "gno_flash.h"
 #include "neogeo_i18n.h"
 #include "video.h"
+#include "neo_state.h"
 #include "ym2610/ym2610.h"
+
+extern void (**m68ki_instruction_jump_table)(void);
 
 #ifndef NEO_DISABLE_VIDEO
 #define NEO_DISABLE_VIDEO 0
@@ -54,14 +57,12 @@ static const char *boot_fail_reason = NULL;
 
 static bool LoadState(const char *path)
 {
-    (void)path;
-    return false;
+    return neo_load_state_path(path) != 0;
 }
 
 static bool SaveState(const char *path)
 {
-    (void)path;
-    return false;
+    return neo_save_state_path(path) != 0;
 }
 
 static void *Screenshot(void)
@@ -156,13 +157,13 @@ static bool boot_game(void)
         boot_fail_reason = "DTCM OOM (ym tables)";
         return false;
     }
-    /* Small AHB only before init_game: store_data_in_flash() calloc's a
-     * ~4 KiB Metadata index — a prior 64 KiB SRAM alloc makes that assert. */
+    /* fix_board before init_game (SFIX usage fill). RAM_EMU bump — leave AHB
+     * for battery SRAM + firmware menus (savestate calloc ~2 KiB). */
     if (!memory.fix_board_usage) {
-        memory.fix_board_usage = ahb_calloc(1, 4096);
+        memory.fix_board_usage = ram_calloc(1, 4096);
         if (!neo_alloc_ok(memory.fix_board_usage)) {
-            printf("neogeo: FATAL AHB fix_board_usage\n");
-            boot_fail_reason = "AHB OOM (fix)";
+            printf("neogeo: FATAL RAM_EMU fix_board_usage\n");
+            boot_fail_reason = "RAM OOM (fix)";
             return false;
         }
     }
@@ -190,7 +191,8 @@ static bool boot_game(void)
         return false;
     }
 
-    /* Battery SRAM / memcard after BIOS flash-cache (needs free AHB heap). */
+    /* Battery SRAM + memcard on AHB. Only fix_board (4 KiB) is on the RAM_EMU
+     * bump — memcard before JT would leave <256 KiB and the 68k table fails. */
     if (!memory.sram) {
         memory.sram = ahb_calloc(1, 0x10000);
         if (!neo_alloc_ok(memory.sram)) {
@@ -211,7 +213,14 @@ static bool boot_game(void)
     }
 
     init_neo();
-    printf("neogeo: booted %s\n", conf.game ? conf.game : "?");
+    if (!m68ki_instruction_jump_table) {
+        printf("neogeo: FATAL no 68k jump table (RAM_EMU too tight)\n");
+        boot_fail_reason = "RAM OOM (68k JT)";
+        return false;
+    }
+    printf("neogeo: booted %s (AHB free=%u RAM free=%u)\n",
+           conf.game ? conf.game : "?",
+           (unsigned)ahb_get_free_size(), (unsigned)ram_get_free_size());
     return true;
 }
 

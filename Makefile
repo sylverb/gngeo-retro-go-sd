@@ -23,7 +23,7 @@ $(PORT)/gno_flash.c \
 $(PORT)/neo_frame.c \
 $(PORT)/event.c \
 $(PORT)/conf_stub.c \
-$(PORT)/state_stub.c \
+$(PORT)/neo_state.c \
 $(PORT)/gnutil_stub.c \
 $(PORT)/lib_stubs.c \
 $(PORT)/m68k_interf.c \

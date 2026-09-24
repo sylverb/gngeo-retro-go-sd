@@ -90,7 +90,9 @@ typedef struct neo_mem {
 
 	Uint32 nb_of_tiles;
 
-	/* Battery SRAM / memcard in AHB; fix_board_usage in DTCM — frees RAM_EMU for the Musashi JT. */
+	/* Battery SRAM + memcard in AHB. fix_board_usage (4 KiB) in RAM_EMU bump
+	 * so the shared AHB heap keeps ~4 KiB for firmware pause/savestate menus.
+	 * Do not put memcard on RAM_EMU before the 256 KiB Musashi JT. */
 	Uint8 *sram;
 	//	Uint32 *pen_usage;                      /* TODO: it's also in rom  */
 	Uint8 *fix_board_usage;

@@ -313,7 +313,33 @@ void cpu_68k_bankswitch(Uint32 address)
 }
 
 void cpu_68k_reset(void) { m68k_pulse_reset(); }
-void cpu_68k_mkstate(gzFile gzf, int mode) { (void)gzf; (void)mode; }
+void cpu_68k_mkstate(gzFile gzf, int mode)
+{
+    if (!m68k_core)
+        return;
+    /* Skip memory_map[] (live function pointers) and jmp_buf / callbacks. */
+    mkstate_data(gzf, &m68k.poll, sizeof(m68k.poll), mode);
+    mkstate_data(gzf, &m68k.cycles, sizeof(m68k.cycles), mode);
+    mkstate_data(gzf, &m68k.cycle_end, sizeof(m68k.cycle_end), mode);
+    mkstate_data(gzf, m68k.dar, sizeof(m68k.dar), mode);
+    mkstate_data(gzf, &m68k.pc, sizeof(m68k.pc), mode);
+    mkstate_data(gzf, m68k.sp, sizeof(m68k.sp), mode);
+    mkstate_data(gzf, &m68k.ir, sizeof(m68k.ir), mode);
+    mkstate_data(gzf, &m68k.t1_flag, sizeof(m68k.t1_flag), mode);
+    mkstate_data(gzf, &m68k.s_flag, sizeof(m68k.s_flag), mode);
+    mkstate_data(gzf, &m68k.x_flag, sizeof(m68k.x_flag), mode);
+    mkstate_data(gzf, &m68k.n_flag, sizeof(m68k.n_flag), mode);
+    mkstate_data(gzf, &m68k.not_z_flag, sizeof(m68k.not_z_flag), mode);
+    mkstate_data(gzf, &m68k.v_flag, sizeof(m68k.v_flag), mode);
+    mkstate_data(gzf, &m68k.c_flag, sizeof(m68k.c_flag), mode);
+    mkstate_data(gzf, &m68k.int_mask, sizeof(m68k.int_mask), mode);
+    mkstate_data(gzf, &m68k.int_level, sizeof(m68k.int_level), mode);
+    mkstate_data(gzf, &m68k.stopped, sizeof(m68k.stopped), mode);
+    mkstate_data(gzf, &m68k.pref_addr, sizeof(m68k.pref_addr), mode);
+    mkstate_data(gzf, &m68k.pref_data, sizeof(m68k.pref_data), mode);
+    mkstate_data(gzf, &m68k.instr_mode, sizeof(m68k.instr_mode), mode);
+    mkstate_data(gzf, &m68k.run_mode, sizeof(m68k.run_mode), mode);
+}
 
 int mem68k_init(void) { return 0; }
 
