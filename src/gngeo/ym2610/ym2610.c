@@ -3256,28 +3256,11 @@ void ym2610_mkstate(gzFile gzf, int mode) {
 	 * Thanks Robert for the fix
 	 * */
 	if (state_version == ST_VER2 && mode == STREAD) {
-		struct ym2610_t ym2610_sav;
-		memcpy(&ym2610_sav, &YM2610, sizeof(YM2610));
-		mkstate_data(gzf, &YM2610, sizeof(YM2610), mode);
-		/* restore some pointer */
-		int fm, ch, slot;
-		YM2610.OPN.ST.Timer_Handler = ym2610_sav.OPN.ST.Timer_Handler;
-		YM2610.OPN.ST.IRQ_Handler = ym2610_sav.OPN.ST.IRQ_Handler;
-		for (ch = 0; ch < 6; ch++) {
-			YM2610.CH[ch].connect1 = ym2610_sav.CH[ch].connect1;
-			YM2610.CH[ch].connect2 = ym2610_sav.CH[ch].connect2;
-			YM2610.CH[ch].connect3 = ym2610_sav.CH[ch].connect3;
-			YM2610.CH[ch].connect4 = ym2610_sav.CH[ch].connect4;
-			YM2610.CH[ch].mem_connect = ym2610_sav.CH[ch].mem_connect;
-			for (slot = 0; slot < 4; slot++) {
-				YM2610.CH[ch].SLOT[slot].DT = ym2610_sav.CH[ch].SLOT[slot].DT;
-			}
-		}
-		YM2610.OPN.P_CH = ym2610_sav.OPN.P_CH;
-		for (ch = 0; ch < 6; ch++) {
-			YM2610.adpcma[ch].pan = ym2610_sav.adpcma[ch].pan;
-		}
-		YM2610.adpcmb.pan = ym2610_sav.adpcmb.pan;
+		/* Old GnGeo ST_VER2 tried to serialize the whole chip including
+		 * live function pointers. We do not support that format here —
+		 * a stack copy of ym2610_t is ~20 KiB and blows the G&W frame. */
+		printf("ym2610: ST_VER2 savestate unsupported\n");
+		return;
 	} else {
 		int fm, ch, slot;
 

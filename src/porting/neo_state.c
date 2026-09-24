@@ -41,15 +41,42 @@ void cpu_68k_bankswitch(Uint32 address);
 
 int mkstate_data(gzFile gzf, void *data, int size, int mode)
 {
-    size_t n;
+    uint8_t *p = (uint8_t *)data;
+    int left = size;
+    /* FatFS (FF_FS_TINY) does multi-sector disk_write() straight from the
+     * user pointer when btw >= 512 and fptr is sector-aligned. That DMA
+     * cannot touch DTCM (Musashi regs) and under the pause-menu stack it
+     * also blows the frame — Memfault then shows PC in a .neo_flash
+     * literal pool (e.g. ym2610_mkstate+0x3a0) with LR at the mkstate_data
+     * call site. Keep chunks strictly below one sector and bounce so the
+     * SD path only ever sees this buffer. */
+    enum { SS_CHUNK = 256 };
+    static uint8_t bounce[SS_CHUNK];
+
     if (!gzf || !data || size <= 0)
         return 0;
-    if (mode == STREAD) {
-        n = fread(data, 1, (size_t)size, gzf);
-        return (n == (size_t)size) ? size : 0;
+
+    while (left > 0) {
+        int chunk = left > SS_CHUNK ? SS_CHUNK : left;
+        size_t n;
+#ifndef HOST_BUILD
+        wdog_refresh();
+#endif
+        if (mode == STREAD) {
+            n = fread(bounce, 1, (size_t)chunk, gzf);
+            if (n != (size_t)chunk)
+                return 0;
+            memcpy(p, bounce, (size_t)chunk);
+        } else {
+            memcpy(bounce, p, (size_t)chunk);
+            n = fwrite(bounce, 1, (size_t)chunk, gzf);
+            if (n != (size_t)chunk)
+                return 0;
+        }
+        p += chunk;
+        left -= chunk;
     }
-    n = fwrite(data, 1, (size_t)size, gzf);
-    return (n == (size_t)size) ? size : 0;
+    return size;
 }
 
 void neogeo_init_save_state(void)
