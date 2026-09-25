@@ -1,12 +1,12 @@
 # Changelog
 
-## [v0.0.1]
+## [v0.0.2]
 
-Initial port of gngeo emulator. It is WIP and is not reaching full speed with sound enabled. You can disable sound emulation by setting volume to 0 in retro-go-sd.
+Initial port of gngeo emulator. It is WIP and has occasionnal sound popping. You can disable sound emulation by setting volume to 0 in retro-go-sd. Sometimes sound is not running, restart game and it should play sound.
 
 ### Added
 
-- Nothing.
+- Savestates.
 
 ### Changed
 
@@ -14,13 +14,13 @@ Initial port of gngeo emulator. It is WIP and is not reaching full speed with so
 
 ### Fixed
 
-- Nothing.
+- Improvement of performances.
 
 ### Install
 
 Release assets (attached to this GitHub release):
 
-- `neogeo-v0.0.1.zip` — SD install archive. Unzip onto the **root** of the SD
+- `neogeo-vx.x.x.zip` — SD install archive. Unzip onto the **root** of the SD
   card (creates `/cores/neogeo.bin`).
 
 Also required on the SD card (not in the zip):
