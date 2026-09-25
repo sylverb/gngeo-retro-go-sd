@@ -25,6 +25,7 @@ jobs:
     outputs:
       project_kind: ${{ steps.meta.outputs.project_kind }}
       packed_bin: ${{ steps.meta.outputs.packed_bin }}
+      ro_bin: ${{ steps.meta.outputs.ro_bin }}
       target_elf: ${{ steps.meta.outputs.target_elf }}
       target_map: ${{ steps.meta.outputs.target_map }}
 
@@ -42,14 +43,17 @@ jobs:
           set -euo pipefail
           PROJECT_KIND="$(make --no-print-directory -f Makefile print-PROJECT_KIND)"
           PACKED_BIN="$(make --no-print-directory -f Makefile print-PACKED_BIN)"
+          RO_BIN="$(make --no-print-directory -f Makefile print-RO_BIN)"
           TARGET_ELF="$(make --no-print-directory -f Makefile print-TARGET_ELF)"
           TARGET_MAP="$(make --no-print-directory -f Makefile print-TARGET_MAP)"
           echo "project_kind=${PROJECT_KIND}" >> "${GITHUB_OUTPUT}"
           echo "packed_bin=${PACKED_BIN}" >> "${GITHUB_OUTPUT}"
+          echo "ro_bin=${RO_BIN}" >> "${GITHUB_OUTPUT}"
           echo "target_elf=${TARGET_ELF}" >> "${GITHUB_OUTPUT}"
           echo "target_map=${TARGET_MAP}" >> "${GITHUB_OUTPUT}"
           echo "PROJECT_KIND=${PROJECT_KIND}"
           echo "PACKED_BIN=${PACKED_BIN}"
+          echo "RO_BIN=${RO_BIN}"
           echo "TARGET_ELF=${TARGET_ELF}"
           echo "TARGET_MAP=${TARGET_MAP}"
 
@@ -67,6 +71,7 @@ jobs:
           name: build-artifacts
           path: |
             ${{ steps.meta.outputs.packed_bin }}
+            ${{ steps.meta.outputs.ro_bin }}
             ${{ steps.meta.outputs.target_elf }}
             ${{ steps.meta.outputs.target_map }}
           if-no-files-found: error
@@ -96,16 +101,22 @@ jobs:
         run: |
           set -euo pipefail
           PACKED_BIN="${{ needs.build.outputs.packed_bin }}"
+          RO_BIN="${{ needs.build.outputs.ro_bin }}"
           TARGET_ELF="${{ needs.build.outputs.target_elf }}"
           TARGET_MAP="${{ needs.build.outputs.target_map }}"
           # Artifact download preserves relative paths under dist/.
-          python3 scripts/stage_release.py \
-            --bin "dist/${PACKED_BIN}" \
-            --elf "dist/${TARGET_ELF}" \
-            --map "dist/${TARGET_MAP}" \
-            --tag "${GITHUB_REF_NAME}" \
-            --out release \
+          STAGE_ARGS=(
+            --bin "dist/${PACKED_BIN}"
+            --elf "dist/${TARGET_ELF}"
+            --map "dist/${TARGET_MAP}"
+            --tag "${GITHUB_REF_NAME}"
+            --out release
             --docker-image "${{ env.DOCKER_IMAGE }}"
+          )
+          if [[ -n "${RO_BIN}" ]]; then
+            STAGE_ARGS+=(--ro "dist/${RO_BIN}")
+          fi
+          python3 scripts/stage_release.py "${STAGE_ARGS[@]}"
 
       - name: Create GitHub Release
         env:
