@@ -22,6 +22,7 @@
 #include "gw_malloc.h"
 #include "neo_mem.h"
 #include "gngeo_platform.h"
+#include "neo_pvc.h"
 
 #ifndef HOST_BUILD
 #include "gw_lcd.h"
@@ -293,6 +294,15 @@ static void remount_bank_window(void)
 
     for (i = 0x20; i <= 0x2f; i++) {
         Uint32 off = base_off + (((Uint32)(i - 0x20)) << 16);
+        /* PVC cart RAM lives at $2FE000-$2FFFFF — must not use direct ROM. */
+        if ((neo_pvc_wanted() || neo_pvc_active()) && i == 0x2f) {
+            m68k.memory_map[i].base = cpu;
+            m68k.memory_map[i].read8 = neo_read8;
+            m68k.memory_map[i].read16 = neo_read16;
+            m68k.memory_map[i].write8 = neo_write8;
+            m68k.memory_map[i].write16 = neo_write16;
+            continue;
+        }
         if (off + 0x10000u > cpu_sz) {
             m68k.memory_map[i].base = cpu;
             m68k.memory_map[i].read8 = neo_read8;

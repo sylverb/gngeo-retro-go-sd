@@ -1,7 +1,8 @@
 # Neo Geo (GnGeo) core for Retro-Go SD.
 #
 #   make / make docker  → neogeo.bin
-# ROMs: /roms/neogeo/*.zip (MAME) or *.gno (XIP — see tools/make_gno_xip.py)
+# ROMs: /roms/neogeo/*.zip (MAME / decrypted) or *.gno (XIP — see tools/)
+# Encrypted sets: make decrypt-zip && ./tools/decrypt_neogeo_zip mslug5.zip -o mslug5_dec.zip
 
 PROJECT_KIND ?= core
 
@@ -21,6 +22,7 @@ $(PORT)/gngeo_platform.c \
 $(PORT)/neo_mem.c \
 $(PORT)/gno_flash.c \
 $(PORT)/neo_zip_flash.c \
+$(PORT)/neo_pvc.c \
 $(PORT)/zip/neo_zip.c \
 $(PORT)/zip/miniz.c \
 $(PORT)/neo_flash_ro.c \
@@ -173,3 +175,21 @@ docker_shell:
 	$(DOCKER_RUN) bash
 
 include host/Makefile.host
+
+# ---- Host decrypt tool (encrypted MAME zip → plain zip) -------------------
+.PHONY: decrypt-zip
+DECRYPT_ZIP := tools/decrypt_neogeo_zip
+DECRYPT_ZIP_SRCS := \
+	tools/decrypt_neogeo_zip.c \
+	$(GNGEO)/neocrypt.c \
+	$(GNGEO)/mame_layer.c \
+	$(PORT)/zip/miniz.c
+
+$(DECRYPT_ZIP): $(DECRYPT_ZIP_SRCS) tools/data/cmc50.xor tools/data/cmc42.xor
+	$(V)$(ECHO) [ CC ] $(DECRYPT_ZIP)
+	$(V)cc -O2 -o $@ $(DECRYPT_ZIP_SRCS) \
+		-I$(PORT) -I$(PORT)/zip -I$(GNGEO) -I$(GNGEO)/m68k -Isrc \
+		-DHAVE_CONFIG_H -DIS_LITTLE_ENDIAN -DGNGEO_DUMP_TOOL=1 \
+		-include $(PORT)/config.h
+
+decrypt-zip: $(DECRYPT_ZIP)

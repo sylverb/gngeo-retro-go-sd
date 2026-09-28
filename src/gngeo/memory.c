@@ -26,6 +26,7 @@
 #include "pd4990a.h"
 #include "transpack.h"
 #include "gno_flash.h"
+#include "neo_pvc.h"
 
 #ifdef GP2X
 #include "ym2610-940/940shared.h"
@@ -851,6 +852,9 @@ Uint16 sma_random(void) {
 
 /* Normal bankswitcher */
 Uint8 mem68k_fetch_bk_normal_byte(Uint32 addr) {
+    if (neo_pvc_active() && (addr & 0xfffffu) >= 0xfe000u)
+        return neo_pvc_read_byte(addr);
+
     if (memory.bksw_unscramble) { /* SMA prot & random number generator */
         Uint32 a=addr&0xFFFFE;
         if (a == 0xfe446) {
@@ -869,6 +873,9 @@ Uint8 mem68k_fetch_bk_normal_byte(Uint32 addr) {
 }
 
 Uint16 mem68k_fetch_bk_normal_word(Uint32 addr) {
+    if (neo_pvc_active() && (addr & 0xfffffu) >= 0xfe000u)
+        return neo_pvc_read_word(addr);
+
     if (memory.bksw_unscramble) { /* SMA prot & random number generator */
       if ((addr&0xFFFFF) == 0xfe446) {
             //printf("Prot reading W %08x\n", addr);
@@ -905,12 +912,20 @@ static void bankswitch(Uint32 address, Uint8 data) {
 }
 
 void mem68k_store_bk_normal_byte(Uint32 addr, Uint8 data) {
+    if (neo_pvc_active() && (addr & 0xfffffu) >= 0xfe000u) {
+        neo_pvc_write_byte(addr, data);
+        return;
+    }
     //if (addr<0x2FFFF0)
     //printf("bankswitch_b %x %x\n", addr, data);
     bankswitch(addr, data);
 }
 
 void mem68k_store_bk_normal_word(Uint32 addr, Uint16 data) {
+    if (neo_pvc_active() && (addr & 0xfffffu) >= 0xfe000u) {
+        neo_pvc_write_word(addr, data);
+        return;
+    }
     //if (addr<0x2FFFF0) 
     //printf("bankswitch_w %x %x\n",addr,data);
     if (memory.bksw_unscramble && (addr & 0xFF) == memory.bksw_unscramble[0]) {

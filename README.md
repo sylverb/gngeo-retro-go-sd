@@ -52,7 +52,28 @@ make host
 # or: NEOGEO_BIOS=uni-bios-40 ./neogeo_host host_roms/maglord.gno
 ```
 
-Controls: arrows = D-pad, `Z`/`X` = B/A, `A`/`S` = Y/X (C/D), Enter = Start,
+Unencrypted MAME `.zip` sets also work (`./neogeo_host blazstar.zip`).
+
+### Encrypted sets (CMC42/50, SMA, PVC, PCM2)
+
+Decrypt needs ~100+ MiB RAM — do it once on a PC, then feed the plain zip
+to host or the device:
+
+```bash
+make decrypt-zip    # → tools/decrypt_neogeo_zip (+ cmc42/cmc50.xor)
+./tools/decrypt_neogeo_zip --list
+./tools/decrypt_neogeo_zip mslug5.zip -o mslug5_dec.zip
+./tools/decrypt_neogeo_zip kof2002.zip -o kof2002_dec.zip
+./neogeo_host mslug5_dec.zip
+# SD: /roms/neogeo/<game>_dec.zip
+```
+
+Supports the encrypted MAME sets in `init_func_table` plus PVC siblings
+(`svc`, `kof2003`, `samsho5`, `samsh5sp`). SMA games still need the SMA
+bank handler at runtime (wired in `neo_game_special_init`). Requires the
+`zip` CLI for the output archive.
+
+Controls: arrows = D-pad, `X`/`Z`/`S`/`A` = Neo A/B/C/D, Enter = Start,
 Shift = Select (coin). Esc quits.
 
 ## Prepare an XIP `.gno` (device)
@@ -86,8 +107,11 @@ Makefile                 CORE_NAME=neogeo pack metadata
 src/main_neogeo.c        Retro-Go frame loop
 src/porting/             SDL stubs, gno XIP loader, Musashi glue
 src/gngeo/               Vendored GnGeo + m68k + mamez80 + ym2610
-tools/make_gno_xip.py    Dump → XIP .gno (+ optional BIOS inject)
-sdk/                     Retro-Go SD core SDK
+tools/make_gno_xip.py         Dump → XIP .gno (+ optional BIOS inject)
+tools/decrypt_neogeo_zip      Encrypted MAME zip → plain zip (mslug5)
+tools/data/cmc50.xor          CMC50 tables for decrypt tool
+tools/data/cmc42.xor          CMC42 tables for decrypt tool
+sdk/                          Retro-Go SD core SDK
 ```
 
 ## Licence

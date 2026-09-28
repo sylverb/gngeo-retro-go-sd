@@ -33,6 +33,7 @@
 #endif
 
 #include "neo_zip_flash.h"
+#include "neo_pvc.h"
 
 int neogeo_fix_bank_type = 0;
 
@@ -832,6 +833,9 @@ int neo_rom_bind_regions(const char *stem,
 
     apply_bios_vectors(r);
     conf.game = r->info.name;
+
+    /* ZIP/GNO path never runs init_roms(); apply PVC + fix-bank by name. */
+    neo_game_special_init(stem);
 
     memset(memory.vid.ram, 0, sizeof(memory.vid.ram));
     memset(memory.vid.pal_neo, 0, sizeof(memory.vid.pal_neo));

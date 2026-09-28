@@ -58,7 +58,7 @@ int main(int argc, char **argv)
     host_set_rom_path(rom);
 
     printf("host: Esc or close window to quit\n");
-    printf("host: Arrows=D-pad  Z=B  X=A  Enter=Start  Shift=Select  A/S=Y/X\n");
+    printf("host: Arrows=D-pad  X=A  Z=B  S=C  A=D  Enter=Start  Shift=Select/coin\n");
     printf("host: F1=save state  F2=load state  (./host_saves/)\n");
     printf("host: ROM %s\n", rom);
     if (bios && bios[0])

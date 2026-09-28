@@ -17,3 +17,5 @@ bios/
 *.gno
 .DS_Store
 __pycache__/
+decrypted/
+tools/decrypt_neogeo_zip

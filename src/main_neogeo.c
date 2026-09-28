@@ -17,6 +17,7 @@
 #include "odroid_settings.h"
 #include "gw_malloc.h"
 #include "neo_mem.h"
+#include "neo_pvc.h"
 
 #ifndef HOST_BUILD
 #include "gw_core_bridge.h"
@@ -218,6 +219,11 @@ static bool boot_game(void)
     if (!m68ki_instruction_jump_table) {
         printf("neogeo: FATAL no 68k jump table (RAM_EMU too tight)\n");
         boot_fail_reason = "RAM OOM (68k JT)";
+        return false;
+    }
+    /* PVC 8 KiB after JT so RAM_EMU leftover is known. */
+    if (!neo_pvc_ensure_ram()) {
+        boot_fail_reason = "OOM (pvc)";
         return false;
     }
     printf("neogeo: booted %s (AHB free=%u RAM free=%u)\n",
