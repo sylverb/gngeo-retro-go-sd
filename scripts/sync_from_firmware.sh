@@ -55,6 +55,7 @@ for extra in \
   Core/Inc/retro-go/gnw_core_meta.h \
   Core/Inc/retro-go/gwhb.h \
   Core/Inc/gw_malloc.h \
+  Core/Inc/gw_flash_alloc.h \
   Core/Inc/gw_buttons.h \
   Core/Inc/gw_ofw.h \
   Core/Inc/heap.hpp \
@@ -74,6 +75,26 @@ for f in gw_core_bridge.c gw_core_bridge.h gw_core_entry.S \
          gw_core_cxx_support.cpp; do
   cp "$FW/Core/Src/porting/core_common/$f" "$ROOT/sdk/src/"
 done
+
+# Firmware bridge.h does not pull flash blob decls; cores need them.
+# Re-inject after every sync so ZIP/GNO flash cache keeps compiling.
+BRIDGE_H="$ROOT/sdk/src/gw_core_bridge.h"
+if ! grep -q 'gw_flash_alloc.h' "$BRIDGE_H"; then
+  python3 - "$BRIDGE_H" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+needle = "uint32_t dma2d_poll(uint32_t timeout_ms);\n"
+inject = needle + (
+    "\n/* External-flash blob cache (ABI). flash_stream_t is in gw_flash_alloc.h. */\n"
+    "#include \"gw_flash_alloc.h\"\n"
+)
+if needle not in text:
+    raise SystemExit(f"sync: inject marker missing in {path}")
+open(path, "w").write(text.replace(needle, inject, 1))
+print("Patched gw_core_bridge.h with #include \"gw_flash_alloc.h\"")
+PY
+fi
 
 cp "$FW/ld/gnw_ram_emu.ld" "$ROOT/sdk/ld/gnw_ram_emu.ld"
 cp "$FW/ld/gnw_itcm_core.ld" "$ROOT/sdk/ld/gnw_itcm_core.ld"

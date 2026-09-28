@@ -1,7 +1,7 @@
 # Neo Geo (GnGeo) core for Retro-Go SD.
 #
 #   make / make docker  → neogeo.bin
-# ROMs: /roms/neogeo/*.gno (XIP — see tools/make_gno_xip.py)
+# ROMs: /roms/neogeo/*.zip (MAME) or *.gno (XIP — see tools/make_gno_xip.py)
 
 PROJECT_KIND ?= core
 
@@ -20,6 +20,9 @@ CORE_C_SOURCES := \
 $(PORT)/gngeo_platform.c \
 $(PORT)/neo_mem.c \
 $(PORT)/gno_flash.c \
+$(PORT)/neo_zip_flash.c \
+$(PORT)/zip/neo_zip.c \
+$(PORT)/zip/miniz.c \
 $(PORT)/neo_flash_ro.c \
 $(PORT)/neo_frame.c \
 $(PORT)/event.c \
@@ -48,6 +51,7 @@ src/neogeo_i18n.c
 
 CORE_C_INCLUDES := \
 -I$(PORT) \
+-I$(PORT)/zip \
 -I$(GNGEO) \
 -I$(GNGEO)/m68k \
 -I$(GNGEO)/mamez80 \
@@ -111,7 +115,7 @@ pack: $(TARGET_BIN) $(RO_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 	$(V)python3 $(PACK_CORE) \
 		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
 		--system-name "Neo Geo" --dirname $(ROM_DIRNAME) \
-		--extensions "gno" \
+		--extensions "zip gno" \
 		--core-name "Neo Geo" \
 		--version "$(CORE_VERSION)" \
 		--cheat-ext "" \

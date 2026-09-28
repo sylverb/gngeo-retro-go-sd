@@ -4,14 +4,14 @@
  * ITCM (.text only, 64 KiB): soft LSPC (video.o) + MAME Z80 + YM2610 hot path.
  * Musashi handlers stay in RAM_EMU.
  *
- * Cold code/rodata (init, savestate, gno loader, crypt, large tables) is
- * linked at sentinel VMA 0xCAFE0000 and shipped as /cores/neogeo.ro. At
+ * Cold code/rodata (init, savestate, gno/ZIP loader, crypt, large tables)
+ * is linked at sentinel VMA 0xCAFE0000 and shipped as /cores/neogeo.ro. At
  * boot, main_neogeo maps that file into the QSPI cache and rebases every
  * absolute 0xCAFE… pointer in RAM_EMU (same idea as zelda3.ro). ITCM must
  * never call into the flash blob.
  *
  * Budget: after .bss, RAM_EMU must keep ≥256 KiB free for the Musashi
- * opcode jump table (ram_malloc).
+ * opcode jump table (ram_malloc). ZIP/miniz stay out of RAM_EMU for that.
  */
 
 INCLUDE gnw_ram_emu.ld
@@ -58,6 +58,9 @@ SECTIONS
       build/core/ym2610.o
       build/core/neo_state.o
       build/core/gno_flash.o
+      build/core/neo_zip_flash.o
+      build/core/neo_zip.o
+      build/core/miniz.o
       build/core/neocrypt.o
       build/core/list.o
       build/core/transpack.o
@@ -70,6 +73,9 @@ SECTIONS
     EXCLUDE_FILE(
       build/core/neo_state.o
       build/core/gno_flash.o
+      build/core/neo_zip_flash.o
+      build/core/neo_zip.o
+      build/core/miniz.o
       build/core/neocrypt.o
       build/core/list.o
       build/core/transpack.o
@@ -133,6 +139,10 @@ SECTIONS
     *(.neo_flash.*)
     build/core/neo_state.o(.text* .rodata*)
     build/core/gno_flash.o(.text* .rodata*)
+    /* ZIP → flash cache (init-only; frees ~36 KiB RAM_EMU for Musashi JT). */
+    build/core/neo_zip_flash.o(.text* .rodata*)
+    build/core/neo_zip.o(.text* .rodata*)
+    build/core/miniz.o(.text* .rodata*)
     build/core/neocrypt.o(.text* .rodata*)
     build/core/list.o(.text* .rodata*)
     build/core/transpack.o(.text* .rodata*)

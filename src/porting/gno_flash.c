@@ -22,6 +22,8 @@
 
 #include "odroid_overlay.h"
 #include "gw_malloc.h"
+#include "neo_mem.h"
+#include "gw_flash_alloc.h"
 
 #ifndef HOST_BUILD
 #include "gw_core_bridge.h"
@@ -30,7 +32,10 @@
 #include "main.h" /* SCB_CleanInvalidateDCache — CMSIS via HAL */
 #endif
 
+#include "neo_zip_flash.h"
+
 int neogeo_fix_bank_type = 0;
+
 
 static const uint8_t *gno_base;
 static uint32_t gno_size;
@@ -301,40 +306,40 @@ static int host_load_from_zip(const char *zip, const char *member, Uint8 **out, 
 }
 #endif /* HOST_BUILD — zip/file helpers + type1 expand */
 
-/* Convert raw SFIX like GnGeo convert_all_char (LE). Scratch must be writable. */
+/* Convert raw SFIX like GnGeo convert_all_char (LE), one 8×8 tile (32 B). */
+static void convert_one_sfix_tile(uint8_t *tile)
+{
+    uint8_t src[32];
+    uint8_t *d = tile;
+    const uint8_t *s = src;
+    int j;
+
+    memcpy(src, tile, 32);
+    for (j = 0; j < 8; j++) {
+        *d++ = s[16];
+        *d++ = s[24];
+        *d++ = s[0];
+        *d++ = s[8];
+        s++;
+    }
+}
+
+static void convert_sfix_tiles_inplace(uint8_t *buf, uint32_t len)
+{
+    uint32_t i;
+    for (i = 0; i + 32u <= len; i += 32u)
+        convert_one_sfix_tile(buf + i);
+}
+
+#ifdef HOST_BUILD
+/* Host path: full buffer already in malloc'd RAM. */
 static void neo_convert_sfix(Uint8 *Ptr, int Taille)
 {
-    int i, j;
-    Uint8 *Src;
-    Uint8 *sav;
-#ifdef HOST_BUILD
-    Src = (Uint8 *)malloc((size_t)Taille);
-#else
-    /* LCD pool is free during ROM load (JT built later). */
-    if ((uint32_t)Taille > 150u * 1024u)
+    if (!Ptr || Taille <= 0)
         return;
-    Src = (Uint8 *)(uintptr_t)(0x24000000u + 150u * 1024u);
-#endif
-    if (!Src)
-        return;
-    sav = Src;
-    memcpy(Src, Ptr, (size_t)Taille);
-    for (i = Taille; i > 0; i -= 32) {
-        for (j = 0; j < 8; j++) {
-            *Ptr++ = *(Src + 16);
-            *Ptr++ = *(Src + 24);
-            *Ptr++ = *(Src);
-            *Ptr++ = *(Src + 8);
-            Src++;
-        }
-        Src += 24;
-    }
-#ifdef HOST_BUILD
-    free(sav);
-#else
-    (void)sav;
-#endif
+    convert_sfix_tiles_inplace(Ptr, (uint32_t)Taille);
 }
+#endif
 
 /* Convert BIOS dumps to LE word order (matches gngeo --dump / .gno carts). */
 static void neo_endian_fix_m68k_bios(Uint8 *p, uint32_t size)
@@ -418,7 +423,113 @@ static int device_try_named(const char *const *roots, const char *const *names,
     return GN_FALSE;
 }
 
-/* R/O flash blob → LE BIOS in flash data cache (LCD scratch). */
+/* SD→flash relocate hook: convert each 16 KiB chunk in the firmware's
+ * program buffer (not the LCD FB). Same contract as neo_flash_ro. */
+static void sfix_relocate_cb(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                              uint8_t *file_address, uint32_t file_size)
+{
+    (void)offset_in_file;
+    (void)file_address;
+    (void)file_size;
+    convert_sfix_tiles_inplace(buffer, length);
+    wdog_refresh();
+}
+
+/* Cache sfix with tile convert in the write buffer. Prefer versioned
+ * store_data key so an older raw path-cache hit cannot skip convert. */
+static int device_map_sfix_converted(const char *path, Uint8 **out, uint32_t *out_size)
+{
+    static const char key[] = "neogeo/sfix_rt1";
+    uint32_t got = 0;
+    const uint8_t *hit;
+    FILE *f;
+    flash_stream_t st;
+    uint8_t buf[4096];
+    uint32_t done = 0;
+    const uint32_t n = 0x20000;
+
+    hit = lookup_data_in_flash(key, &got);
+    if (hit && got == n) {
+        *out = (Uint8 *)(uintptr_t)hit;
+        *out_size = n;
+        return GN_TRUE;
+    }
+
+    f = fopen(path, "rb");
+    if (!f)
+        return GN_FALSE;
+
+    memset(&st, 0, sizeof(st));
+    if (!store_data_begin(&st, key, n)) {
+        fclose(f);
+        return GN_FALSE;
+    }
+
+    while (done < n) {
+        uint32_t want = n - done;
+        size_t rd;
+        if (want > sizeof(buf))
+            want = sizeof(buf);
+        rd = fread(buf, 1, want, f);
+        if (rd == 0) {
+            memset(buf, 0, want);
+            rd = want;
+        } else if (rd < want) {
+            memset(buf + rd, 0, want - rd);
+            rd = want;
+        }
+        /* Same transform as cache_file_in_flash_relocate's relocate_cb. */
+        sfix_relocate_cb(buf, (uint32_t)rd, done, NULL, n);
+        if (!store_data_append(&st, buf, (uint32_t)rd)) {
+            store_data_abort(&st);
+            fclose(f);
+            return GN_FALSE;
+        }
+        done += (uint32_t)rd;
+        {
+            uint8_t pct = (uint8_t)((done * 100u) / n);
+            if (pct > 99)
+                pct = 99;
+            odroid_overlay_draw_progress_bar("sfix", pct);
+        }
+        wdog_refresh();
+    }
+    fclose(f);
+
+    hit = store_data_finish(&st);
+    if (!hit) {
+        store_data_abort(&st);
+        return GN_FALSE;
+    }
+    neo_xip_sync();
+    *out = (Uint8 *)(uintptr_t)hit;
+    *out_size = n;
+    printf("gno: sfix converted → flash (%s)\n", path);
+    odroid_overlay_draw_progress_bar("sfix", 100);
+    return GN_TRUE;
+}
+
+static int device_try_named_sfix(const char *const *roots, const char *const *names,
+                                  Uint8 **out, uint32_t *out_size)
+{
+    int r, n;
+    char path[256];
+
+    for (r = 0; roots[r]; r++) {
+        for (n = 0; names[n]; n++) {
+            snprintf(path, sizeof(path), "%s/%s", roots[r], names[n]);
+            if (device_map_sfix_converted(path, out, out_size)) {
+                printf("gno: mapped %s (%u bytes, converted)\n",
+                       path, (unsigned)*out_size);
+                return GN_TRUE;
+            }
+        }
+    }
+    return GN_FALSE;
+}
+
+/* R/O flash blob → LE BIOS in flash data cache (LCD scratch — BIOS only,
+ * and only when endian swap is required; uncommon for UniBIOS LE dumps). */
 static int device_ensure_le_bios(Uint8 **pp, uint32_t *psz)
 {
     Uint8 *p = *pp;
@@ -450,43 +561,6 @@ static int device_ensure_le_bios(Uint8 **pp, uint32_t *psz)
         return GN_FALSE;
     *pp = (Uint8 *)(uintptr_t)q;
     printf("gno: BIOS endian-fixed → flash cache\n");
-    return GN_TRUE;
-}
-
-/* Raw SFIX → converted 128 KiB in flash data cache. */
-static int device_ensure_converted_sfix(Uint8 **pp, uint32_t *psz)
-{
-    Uint8 *raw = *pp;
-    uint32_t raw_sz = *psz;
-    char key[48];
-    uint32_t got = 0;
-    const uint8_t *q;
-    Uint8 *scratch;
-    uint32_t n = 0x20000;
-
-    snprintf(key, sizeof(key), "neogeo/sfix_c_%lu", (unsigned long)raw_sz);
-    q = lookup_data_in_flash(key, &got);
-    if (q && got == n) {
-        *pp = (Uint8 *)(uintptr_t)q;
-        *psz = n;
-        return GN_TRUE;
-    }
-    scratch = (Uint8 *)(uintptr_t)0x24000000u;
-    memset(scratch, 0, n);
-    if (raw_sz > n)
-        raw_sz = n;
-    memcpy(scratch, raw, raw_sz);
-    neo_convert_sfix(scratch, (int)n);
-    wdog_refresh();
-    if (!store_data_in_flash(key, scratch, n))
-        return GN_FALSE;
-    neo_xip_sync();
-    q = lookup_data_in_flash(key, &got);
-    if (!q || got != n)
-        return GN_FALSE;
-    *pp = (Uint8 *)(uintptr_t)q;
-    *psz = n;
-    printf("gno: sfix converted → flash cache\n");
     return GN_TRUE;
 }
 #endif /* !HOST_BUILD */
@@ -569,12 +643,10 @@ static int neo_load_system_bios(GAME_ROMS *r)
         printf("gno: external bios_sfix converted\n");
     }
 #else
-    if (device_try_named(roots, cands_sfix, &p, &sz)) {
-        if (device_ensure_converted_sfix(&p, &sz)) {
-            r->bios_sfix.p = p;
-            r->bios_sfix.size = sz;
-            got_sfix = 1;
-        }
+    if (device_try_named_sfix(roots, cands_sfix, &p, &sz)) {
+        r->bios_sfix.p = p;
+        r->bios_sfix.size = sz;
+        got_sfix = 1;
     }
 #endif
 
@@ -671,6 +743,110 @@ static void apply_bios_vectors(GAME_ROMS *r)
     vector_patched = 1;
 }
 
+int neo_rom_bind_regions(const char *stem,
+                         const uint8_t *p, uint32_t p_sz,
+                         const uint8_t *m, uint32_t m_sz,
+                         const uint8_t *v, uint32_t v_sz,
+                         const uint8_t *s, uint32_t s_sz,
+                         const uint8_t *gfix, uint32_t g_sz,
+                         const uint8_t *c, uint32_t c_sz,
+                         const uint8_t *spr, uint32_t spr_sz)
+{
+    GAME_ROMS *r = &memory.rom;
+
+    if (!stem || !p || !m || !v || !s || !gfix || !c || !spr) {
+        gno_set_err("bad region ptrs");
+        return GN_FALSE;
+    }
+
+    memset(r, 0, sizeof(*r));
+    vector_patched = 0;
+    memory.bksw_handler = 0;
+    memory.bksw_unscramble = NULL;
+    memory.bksw_offset = NULL;
+    memory.vid.spr_cache.data = NULL;
+    memory.vid.spr_cache.gno = NULL;
+    gno_err[0] = 0;
+
+    snprintf(game_name_storage, sizeof(game_name_storage), "%s", stem);
+    r->info.name = game_name_storage;
+    r->info.longname = game_name_storage;
+    r->info.flags = 0;
+
+    r->cpu_m68k.p = (Uint8 *)(uintptr_t)p;
+    r->cpu_m68k.size = p_sz;
+    r->cpu_z80.p = (Uint8 *)(uintptr_t)m;
+    r->cpu_z80.size = m_sz;
+    r->adpcma.p = (Uint8 *)(uintptr_t)v;
+    r->adpcma.size = v_sz;
+    r->adpcmb.p = r->adpcma.p;
+    r->adpcmb.size = r->adpcma.size;
+    r->game_sfix.p = (Uint8 *)(uintptr_t)s;
+    r->game_sfix.size = s_sz;
+    r->gfix_usage.p = (Uint8 *)(uintptr_t)gfix;
+    r->gfix_usage.size = g_sz;
+    r->tiles.p = (Uint8 *)(uintptr_t)c;
+    r->tiles.size = c_sz;
+    r->spr_usage.p = (Uint8 *)(uintptr_t)spr;
+    r->spr_usage.size = spr_sz;
+
+    memory.fix_game_usage = r->gfix_usage.p;
+    memory.nb_of_tiles = r->tiles.size >> 7;
+
+    printf("neo: game=%s p=%u m=%u v=%u s=%u c=%u\n",
+           stem, (unsigned)p_sz, (unsigned)m_sz, (unsigned)v_sz,
+           (unsigned)s_sz, (unsigned)c_sz);
+
+#ifndef HOST_BUILD
+    neo_xip_sync();
+#endif
+
+    /* Lasting RAM_EMU allocs happen after zip's ram_init(). */
+    if (!memory.fix_board_usage) {
+        memory.fix_board_usage = ram_calloc(1, 4096);
+        if (!neo_alloc_ok(memory.fix_board_usage)) {
+            memory.fix_board_usage = NULL;
+            gno_set_err("OOM fix_board");
+            return GN_FALSE;
+        }
+    }
+
+    if (neo_load_system_bios(r) != GN_TRUE) {
+        gno_set_err("missing BIOS files");
+        return GN_FALSE;
+    }
+
+    if (r->zoom_table.p && r->zoom_table.size >= 0x10000) {
+        memory.ng_lo = r->zoom_table.p;
+    } else if (!memory.ng_lo) {
+        memory.ng_lo = ram_malloc(0x10000);
+        if (neo_alloc_ok(memory.ng_lo))
+            memset(memory.ng_lo, 0, 0x10000);
+        else
+            memory.ng_lo = NULL;
+        printf("neo: warning — missing 000-lo.lo zoom table\n");
+    }
+
+    if (r->bios_sfix.p)
+        fill_fix_usage(r->bios_sfix.p, (int)r->bios_sfix.size, memory.fix_board_usage);
+
+    apply_bios_vectors(r);
+    conf.game = r->info.name;
+
+    memset(memory.vid.ram, 0, sizeof(memory.vid.ram));
+    memset(memory.vid.pal_neo, 0, sizeof(memory.vid.pal_neo));
+    memset(memory.vid.pal_host, 0, sizeof(memory.vid.pal_host));
+    memory.vid.currentpal = 0;
+    memory.vid.currentfix = 0;
+    current_pal = memory.vid.pal_neo[0];
+    current_pc_pal = (Uint32 *)memory.vid.pal_host[0];
+    current_fix = r->bios_sfix.p;
+    fix_usage = memory.fix_board_usage;
+    update_all_pal();
+    init_video();
+    return GN_TRUE;
+}
+
 int gno_flash_load(const char *path)
 {
     uint32_t size = 0;
@@ -753,6 +929,14 @@ int gno_flash_load(const char *path)
 
     /* Prefer SD /bios/neogeo (or host --bios) over regions baked into the
      * .gno so every game uses the same UniBIOS/sfix/000-lo. */
+    if (!memory.fix_board_usage) {
+        memory.fix_board_usage = ram_calloc(1, 4096);
+        if (!neo_alloc_ok(memory.fix_board_usage)) {
+            memory.fix_board_usage = NULL;
+            gno_set_err("OOM fix_board");
+            return GN_FALSE;
+        }
+    }
     if (neo_load_system_bios(r) != GN_TRUE) {
         gno_set_err("missing BIOS files");
         return GN_FALSE;
@@ -796,8 +980,23 @@ int gno_flash_load(const char *path)
 
 int init_game(char *rom_name)
 {
+    const char *ext;
     if (!rom_name || !rom_name[0])
         return GN_FALSE;
+
+    ext = strrchr(rom_name, '.');
+    if (ext && ((ext[1] == 'z' || ext[1] == 'Z') &&
+                (ext[2] == 'i' || ext[2] == 'I') &&
+                (ext[3] == 'p' || ext[3] == 'P') &&
+                ext[4] == '\0')) {
+        if (!neo_zip_flash_load(rom_name)) {
+            gno_set_err(neo_zip_flash_last_error());
+            return GN_FALSE;
+        }
+        reset_frame_skip();
+        return GN_TRUE;
+    }
+
     if (gno_flash_load(rom_name) != GN_TRUE)
         return GN_FALSE;
     reset_frame_skip();

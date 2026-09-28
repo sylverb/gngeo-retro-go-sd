@@ -56,12 +56,24 @@ static SDL_Surface *alloc_surface(int w, int h)
     s->format->Gmask = 0x07E0;
     s->format->Bmask = 0x001F;
     nbytes = (size_t)s->pitch * (size_t)h;
+    /*
+     * Host: use libc malloc. ZIP→flash calls ram_init() after screen_init,
+     * which rewinds the RAM_EMU bump and would alias pixels with the 68k JT
+     * — FillRect then wipes the jump table and the next draw/opcode crashes
+     * at NULL. Device keeps ram_malloc / LCD FB (no host ram_init rewind).
+     */
+#ifdef HOST_BUILD
+    s->pixels = calloc(1, nbytes);
+#else
     s->pixels = ram_malloc(nbytes);
+#endif
     if (!s->pixels) {
         free(s);
         return NULL;
     }
+#ifndef HOST_BUILD
     memset(s->pixels, 0, nbytes);
+#endif
     s->owned_pixels = 1;
     s->clip_rect.x = 0;
     s->clip_rect.y = 0;
@@ -115,7 +127,11 @@ void SDL_FreeSurface(SDL_Surface *surface)
 {
     if (!surface)
         return;
-    /* pixels come from ram bump or LCD — not freed individually */
+#ifdef HOST_BUILD
+    if (surface->owned_pixels && surface->pixels)
+        free(surface->pixels);
+#endif
+    /* Device: pixels come from ram bump or LCD — not freed individually */
     free(surface);
 }
 

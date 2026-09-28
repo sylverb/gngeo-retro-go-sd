@@ -161,23 +161,12 @@ static bool boot_game(void)
         return false;
     }
 
-    /* Hot pools outside RAM_EMU so the 256 KiB Musashi JT still fits. */
+    /* YM tables in DTCM first. ZIP cache uses ram_emu then ram_init() —
+     * lasting bump allocs (fix_board) happen inside bind after that. */
     neo_dtcm_ensure();
-    /* FM tables in DTCM (~30 KiB), built with accurate sin/log — not .rodata
-     * (that stole JT space → memory_map NULL → hardfault PC=0). */
     if (!YM2610_prepare_tables()) {
         boot_fail_reason = "DTCM OOM (ym tables)";
         return false;
-    }
-    /* fix_board before init_game (SFIX usage fill). RAM_EMU bump — leave AHB
-     * for battery SRAM + firmware menus (savestate calloc ~2 KiB). */
-    if (!memory.fix_board_usage) {
-        memory.fix_board_usage = ram_calloc(1, 4096);
-        if (!neo_alloc_ok(memory.fix_board_usage)) {
-            printf("neogeo: FATAL RAM_EMU fix_board_usage\n");
-            boot_fail_reason = "RAM OOM (fix)";
-            return false;
-        }
     }
 
     cf_init();
@@ -198,13 +187,14 @@ static bool boot_game(void)
     }
 
     if (init_game((char *)ACTIVE_FILE->path) != GN_TRUE) {
-        printf("neogeo: init_game failed\n");
         boot_fail_reason = gno_flash_last_error();
+        printf("neogeo: init_game failed: %s\n",
+               boot_fail_reason ? boot_fail_reason : "?");
         return false;
     }
 
-    /* Battery SRAM + memcard on AHB. Only fix_board (4 KiB) is on the RAM_EMU
-     * bump — memcard before JT would leave <256 KiB and the 68k table fails. */
+    /* Battery SRAM + memcard on AHB (after ZIP so AHB isn't fragmented by
+     * transient FatFs/miniz state — heap is freeable but keep sram early). */
     if (!memory.sram) {
         memory.sram = ahb_calloc(1, 0x10000);
         if (!neo_alloc_ok(memory.sram)) {

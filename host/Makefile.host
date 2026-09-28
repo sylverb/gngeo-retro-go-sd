@@ -80,6 +80,7 @@ HOST_SRCS := \
 	host/host_platform.c \
 	host/host_emu.c \
 	host/host_malloc.c \
+	host/host_zip_flash.c \
 	host/host_i18n.c
 
 HOST_OBJS := $(addprefix $(HOST_BUILD_DIR)/,$(HOST_SRCS:.c=.o))

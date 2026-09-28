@@ -67,8 +67,7 @@ int odroid_overlay_confirm(const char *text, bool yes_selected, void_callback_t 
 void odroid_overlay_alert(const char *text);
 
 uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap);
-
-/* Relocate callback: see firmware gw_flash_alloc.h / gw_firmware_abi.h. */
+/* Transform each SD→flash chunk in RAM before program (see gw_flash_alloc.h). */
 uint8_t *odroid_overlay_cache_file_in_flash_relocate(
     const char *file_path, uint32_t *file_size_p, bool byte_swap,
     void (*relocate_cb)(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,

@@ -9,6 +9,7 @@
 #include <stdio.h>
 
 #include "odroid_overlay.h"
+#include "gw_flash_alloc.h"
 
 #ifndef HOST_BUILD
 #include "gw_core_bridge.h"
