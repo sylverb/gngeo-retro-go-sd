@@ -26,6 +26,8 @@ static int fc;
 static int skip_this_frame;
 static int want_draw;
 static Uint32 tm_cycle;
+static int neo_int1_bios_frames; /* consecutive frames with $10FD80 bit7 */
+static int neo_softlock_frames;
 
 static int neo_frame_irq(void)
 {
@@ -45,6 +47,38 @@ static int neo_frame_irq(void)
     /* draw_screen is deferred to neo_draw_frame() so submit_audio can run
      * first — a slow blit must not starve the DMA half-buffer. */
     return 1;
+}
+
+/* Detect mslug5-style soft-lock: cart frame wait while BIOS owns INT1. */
+static void neo_trace_int1_owner(void)
+{
+    Uint8 fd80 = memory.ram[0xfd80 ^ 1];
+    Uint32 pc = cpu_68k_getpc() & 0xffffffu;
+    Uint8 ctr = memory.ram[0x16 ^ 1];
+    Uint8 tgt = memory.ram[0x17 ^ 1];
+
+    if (fd80 & 0x80) {
+        neo_int1_bios_frames++;
+        if (neo_int1_bios_frames == 1 || neo_int1_bios_frames == 60 ||
+            (neo_int1_bios_frames % 300) == 0)
+            printf("neo: INT1=BIOS fd80=%02x pc=%06x (%d frames)\n",
+                   fd80, pc, neo_int1_bios_frames);
+    } else {
+        if (neo_int1_bios_frames >= 60)
+            printf("neo: INT1=CART again after %d BIOS frames pc=%06x\n",
+                   neo_int1_bios_frames, pc);
+        neo_int1_bios_frames = 0;
+    }
+
+    /* Busy-wait near $EFx with bit7 set and ctr < tgt → soft-lock. */
+    if ((fd80 & 0x80) && pc >= 0xef0 && pc < 0xf00 && ctr < tgt) {
+        neo_softlock_frames++;
+        if (neo_softlock_frames == 30 || neo_softlock_frames == 120)
+            printf("neo: softlock? wait pc=%06x fd80=%02x ctr=%02x/%02x\n",
+                   pc, fd80, ctr, tgt);
+    } else {
+        neo_softlock_frames = 0;
+    }
 }
 
 void neo_run_frame(int draw_video)
@@ -76,6 +110,7 @@ void neo_run_frame(int draw_video)
     PROFILER_START(PROF_68K);
     tm_cycle = cpu_68k_run(cpu_68k_timeslice - tm_cycle);
     PROFILER_STOP(PROF_68K);
+    neo_trace_int1_owner();
     a = neo_frame_irq();
 
     memory.watchdog++;

@@ -11,6 +11,10 @@ int neo_pvc_wanted(void);
 /* Call after battery SRAM is allocated (end of boot_game AHB phase). */
 int neo_pvc_ensure_ram(void);
 
+/* Savestate: 0 if PVC not used; else PVC_RAM_BYTES and a live buffer. */
+Uint16 *neo_pvc_ram_ptr(void);
+Uint32 neo_pvc_ram_bytes(void);
+
 Uint16 neo_pvc_read_word(Uint32 addr);
 Uint8 neo_pvc_read_byte(Uint32 addr);
 void neo_pvc_write_word(Uint32 addr, Uint16 data);

@@ -1374,6 +1374,13 @@ void core_store_data_abort(void *st)
 {
     gw_firmware_abi()->store_data_abort(st);
 }
+uint32_t core_flash_cache_usable_size(void)
+{
+    const gw_firmware_abi_t *abi = gw_firmware_abi();
+    if (!abi->flash_cache_usable_size)
+        return 0;
+    return abi->flash_cache_usable_size();
+}
 int core_lcd_get_mode(void)
 {
     return gw_firmware_abi()->lcd_get_mode();

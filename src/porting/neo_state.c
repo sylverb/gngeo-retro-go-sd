@@ -18,14 +18,16 @@
 #include "pd4990a.h"
 #include "m68k/m68k.h"
 #include "gno_flash.h"
+#include "neo_pvc.h"
 
 #ifndef HOST_BUILD
 #include "gw_lcd.h"
 #include "gw_core_bridge.h"
 #endif
 
-/* "NEOS01" = Neo Geo Offline State v1 (this port, not classic GNGST). */
-#define NEO_SS_MAGIC "NEOS01"
+/* "NEOS02" = + PVC cart RAM (mslug5 / svc / kof2003). NEOS01 still loads. */
+#define NEO_SS_MAGIC    "NEOS02"
+#define NEO_SS_MAGIC_V1 "NEOS01"
 #define NEO_SS_MAGIC_LEN 6
 
 SDL_Surface *state_img;
@@ -196,6 +198,53 @@ static int neo_ss_body(gzFile f, int mode)
     return 1;
 }
 
+/* PVC cart RAM (8 KiB) — without it mslug5 HUD/banks break after load. */
+static int neo_ss_pvc(gzFile f, int mode, int have_pvc_section)
+{
+    Uint32 want = neo_pvc_ram_bytes();
+    Uint32 got = 0;
+
+    if (!have_pvc_section) {
+        /* NEOS01: leave pvc_ram as post-boot zeros / current. */
+        return 1;
+    }
+
+    if (mode == STWRITE)
+        got = want;
+
+    if (!rw_ok(f, &got, sizeof(got), mode))
+        return 0;
+
+    if (mode == STWRITE) {
+        if (want) {
+            if (!neo_pvc_ensure_ram() || !neo_pvc_ram_ptr())
+                return 0;
+            if (!rw_ok(f, neo_pvc_ram_ptr(), (int)want, mode))
+                return 0;
+        }
+        return 1;
+    }
+
+    /* STREAD */
+    if (got == 0)
+        return 1;
+    if (got != want || !want) {
+        /* Skip unknown / mismatched blob to keep stream consistent. */
+        uint8_t skip[256];
+        Uint32 left = got;
+        while (left) {
+            Uint32 n = left > sizeof(skip) ? (Uint32)sizeof(skip) : left;
+            if (!rw_ok(f, skip, (int)n, mode))
+                return 0;
+            left -= n;
+        }
+        return 1;
+    }
+    if (!neo_pvc_ensure_ram() || !neo_pvc_ram_ptr())
+        return 0;
+    return rw_ok(f, neo_pvc_ram_ptr(), (int)got, mode);
+}
+
 int neo_save_state_path(const char *path)
 {
     FILE *f;
@@ -210,7 +259,8 @@ int neo_save_state_path(const char *path)
     wdog_refresh();
 #endif
     if (fwrite(NEO_SS_MAGIC, 1, NEO_SS_MAGIC_LEN, f) != NEO_SS_MAGIC_LEN
-        || !neo_ss_body(f, STWRITE)) {
+        || !neo_ss_body(f, STWRITE)
+        || !neo_ss_pvc(f, STWRITE, 1)) {
         printf("neogeo: save write fail\n");
         fclose(f);
         return 0;
@@ -224,6 +274,7 @@ int neo_load_state_path(const char *path)
 {
     FILE *f;
     char magic[NEO_SS_MAGIC_LEN];
+    int have_pvc;
     if (!path || !path[0])
         return 0;
     f = fopen(path, "rb");
@@ -234,13 +285,21 @@ int neo_load_state_path(const char *path)
 #ifndef HOST_BUILD
     wdog_refresh();
 #endif
-    if (fread(magic, 1, NEO_SS_MAGIC_LEN, f) != NEO_SS_MAGIC_LEN
-        || memcmp(magic, NEO_SS_MAGIC, NEO_SS_MAGIC_LEN) != 0) {
+    if (fread(magic, 1, NEO_SS_MAGIC_LEN, f) != NEO_SS_MAGIC_LEN) {
         printf("neogeo: bad savestate magic\n");
         fclose(f);
         return 0;
     }
-    if (!neo_ss_body(f, STREAD)) {
+    if (memcmp(magic, NEO_SS_MAGIC, NEO_SS_MAGIC_LEN) == 0)
+        have_pvc = 1;
+    else if (memcmp(magic, NEO_SS_MAGIC_V1, NEO_SS_MAGIC_LEN) == 0)
+        have_pvc = 0;
+    else {
+        printf("neogeo: bad savestate magic\n");
+        fclose(f);
+        return 0;
+    }
+    if (!neo_ss_body(f, STREAD) || !neo_ss_pvc(f, STREAD, have_pvc)) {
         printf("neogeo: load read fail\n");
         fclose(f);
         return 0;

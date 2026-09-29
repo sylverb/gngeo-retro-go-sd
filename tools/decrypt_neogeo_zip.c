@@ -689,7 +689,8 @@ static void dec_samsh5sp(GAME_ROMS *r)
 	kof2000_neogeo_gfx_decrypt(r, 0x0d);
 }
 
-/* s_size: most CMC 0x20000; banked FIX (type 1/2) often 0x80000. */
+/* s_size: match MAME hash/neogeo.xml "fixed" (0x20000 or 0x80000).
+ * Banking (type 1/2) only applies when size > 0x20000 — see video.c. */
 static const game_def_t games[] = {
 	{ "kof98",    "242-p1.p1",       P_CONCAT,    4, 0x800000, 0, 0x20000, 0, dec_kof98,    "P only" },
 	{ "kof99",    "251-p1.p1",       P_SMA_P12,   4, 0x800000, 1, 0x20000, 0, dec_kof99,    "SMA+CMC42" },
@@ -708,6 +709,7 @@ static const game_def_t games[] = {
 	{ "nitd",     "260-p1.p1",       P_CONCAT,    1, 0x800000, 1, 0x20000, 0, dec_nitd,     "CMC42" },
 	{ "zupapa",   "070-p1.p1",       P_CONCAT,    1, 0x800000, 1, 0x20000, 0, dec_zupapa,   "CMC42" },
 	{ "sengoku3", "261-ph1.p1",      P_SWAPHALF,  2, 0x800000, 1, 0x20000, 0, dec_sengoku3, "CMC42" },
+	/* MAME fixed=0x20000 + bank_type 1, but banking is size-gated off. */
 	{ "mslug5",   "268-p1cr.p1",     P_INTER32,   4, 0x800000, 1, 0x20000, 1, dec_mslug5,   "PVC+CMC50+PCM2" },
 	{ "svc",      "269-p1.p1",       P_INTER32,   4, 0x800000, 1, 0x80000, 1, dec_svc,      "PVC+CMC50+PCM2" },
 	{ "kof2003",  "271-p1c.p1",      P_KOF2003,   4, 0x800000, 1, 0x80000, 1, dec_kof2003,  "PVC+CMC50+PCM2" },
@@ -1118,14 +1120,28 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		if (g->need_cmc50_m1) {
-			/* cmc50_m1_decrypt always reads 0x80000 from audiocrypt */
+			/* cmc50_m1_decrypt always reads 0x80000 from audiocrypt.
+			 * MAME mirrors short dumps (e.g. kof2000 256 KiB) with
+			 * ROM_RELOAD — zero-padding decrypts to garbage banks. */
+			size_t off = 0;
+			size_t chunk = m_sz;
 			r.cpu_z80c.p = calloc(1, 0x80000);
 			if (!r.cpu_z80c.p) {
 				free(m1);
 				src_close(&src);
 				return 1;
 			}
-			memcpy(r.cpu_z80c.p, m1, m_sz < 0x80000 ? m_sz : 0x80000);
+			if (chunk > 0x80000)
+				chunk = 0x80000;
+			while (off < 0x80000 && chunk) {
+				size_t n = chunk;
+				if (n > 0x80000 - off)
+					n = 0x80000 - off;
+				memcpy(r.cpu_z80c.p + off, m1, n);
+				off += n;
+			}
+			if (chunk && chunk < 0x80000)
+				printf("  M1 mirrored %zu → 512 KiB\n", chunk);
 			r.cpu_z80c.size = 0x80000;
 			free(m1);
 			r.cpu_z80.p = calloc(1, 0x90000);
@@ -1178,8 +1194,17 @@ int main(int argc, char **argv)
 		if (!zip_write_member(tmpdir, namebuf, r.cpu_m68k.p, r.cpu_m68k.size))
 			goto fail_tmp;
 		snprintf(namebuf, sizeof(namebuf), "%s-m1.m1", g->name);
-		if (!zip_write_member(tmpdir, namebuf, r.cpu_z80.p, r.cpu_z80.size))
-			goto fail_tmp;
+		if (g->need_cmc50_m1) {
+			/* After cmc50_m1_decrypt, audiocrypt holds plain decrypted 512 KiB.
+			 * Write that — not the 0x90000 audiocpu banking image. neo_zip's
+			 * Z80 banking indexes from ROM+0 (FBNeo-style); the 0x90000 layout
+			 * shifts every bank ≥64 KiB and yields looping/garbage ADPCM. */
+			if (!zip_write_member(tmpdir, namebuf, r.cpu_z80c.p, 0x80000))
+				goto fail_tmp;
+		} else {
+			if (!zip_write_member(tmpdir, namebuf, r.cpu_z80.p, r.cpu_z80.size))
+				goto fail_tmp;
+		}
 		snprintf(namebuf, sizeof(namebuf), "%s-s1.s1", g->name);
 		if (!zip_write_member(tmpdir, namebuf, r.game_sfix.p, r.game_sfix.size))
 			goto fail_tmp;

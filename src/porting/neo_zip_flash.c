@@ -1,7 +1,8 @@
 /*
  * MAME Neo Geo .zip → per-region QSPI cache (runtime-optimal layout).
  *
- * Keys: neogeo/<stem>/{p,m,v,s,gfix,c,spr}
+ * Keys: neogeo/<stem>/{p2,m,v,s,gfix,c,spr}
+ * (p2 = program ROM after CONTINUE-vs-linear autodetection)
  * Scratch (inflate + converts) from ram_emu; ram_init() when done.
  * OSPI page alignment (256 B) coalesced here — no firmware change.
  */
@@ -18,6 +19,7 @@
 #include "transpack.h"
 #include "neo_zip.h"
 #include "gw_malloc.h"
+#include "neo_flash_ro.h"
 
 #ifndef HOST_BUILD
 #include "gw_core_bridge.h"
@@ -30,6 +32,13 @@ void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress);
 void wdog_refresh(void);
 #endif
 
+/* Typical OSPI smallest erase — payloads are rounded up when programmed. */
+#define NEO_FLASH_ERASE_ALIGN  4096u
+
+/* Shared system blobs that must remain in the cache with any game
+ * (UniBIOS + converted sfix + 000-lo). Loaded after the cart in bind, so
+ * reserve them up-front when sizing a game. */
+#define NEO_BIOS_FLASH_BYTES   (0x20000u + 0x20000u + 0x10000u)
 static char zip_err[64];
 
 const char *neo_zip_flash_last_error(void)
@@ -201,17 +210,47 @@ static int add_chip(neo_chip_t *arr, int *n, int max, const char *name,
     return 1;
 }
 
+/* LE byteswapped "NEO-GEO" at cart header $100 → already in memory order
+ * (decrypt_neogeo_zip SWAPHALF / linear dumps). MAME CONTINUE dumps lack it. */
+static int p2m_already_linear(neo_zip_t *z, const char *name, uint32_t crc)
+{
+    neo_zip_file_t *f;
+    uint8_t buf[0x108];
+    uint32_t got = 0;
+
+    f = neo_zip_fopen(z, name, crc);
+    if (!f)
+        f = neo_zip_fopen(z, name, 0);
+    if (!f)
+        return 0;
+    while (got < sizeof(buf)) {
+        int r = neo_zip_fread(f, buf + got, (int)(sizeof(buf) - got));
+        if (r <= 0)
+            break;
+        got += (uint32_t)r;
+    }
+    neo_zip_fclose(f);
+    if (got < 0x106)
+        return 0;
+    return buf[0x100] == 0x45 && buf[0x101] == 0x4e &&
+           buf[0x102] == 0x2d && buf[0x103] == 0x4f &&
+           buf[0x104] == 0x45 && buf[0x105] == 0x47;
+}
+
 static int append_rom_files(ROM_DEF *drv, const neo_chip_t *arr, int n,
-                            uint8_t region, uint32_t *region_size_out)
+                            uint8_t region, uint32_t *region_size_out,
+                            int p_already_linear)
 {
     uint32_t off = 0;
     int i;
 
     /* Classic 2 MiB single P1: MAME loads file[0..1M) at $100000 and
      * file[1M..2M) at $000000 (ROM_CONTINUE). Hardware maps the second
-     * mebibyte of the chip to $000000. Linear dump → white screen. */
+     * mebibyte of the chip to $000000. Linear dump → white screen.
+     * Skip when the zip already holds a memory-order image (SWAPHALF
+     * decrypt output) — applying CONTINUE again double-swaps → white. */
     if (region == REGION_MAIN_CPU_CARTRIDGE && n == 1 &&
-        arr[0].size == 0x200000u) {
+        arr[0].size == 0x200000u && !p_already_linear) {
         if (drv->nb_romfile + 2 > 32)
             return 0;
         for (i = 0; i < 2; i++) {
@@ -392,13 +431,27 @@ static const ROM_DEF *rom_def_from_zip(neo_zip_t *z, const char *stem)
         }
     }
 
-    if (!append_rom_files(&s_auto_drv, p, np, REGION_MAIN_CPU_CARTRIDGE, &psz) ||
-        !append_rom_files(&s_auto_drv, s, ns, REGION_FIXED_LAYER_CARTRIDGE, &ssz) ||
-        !append_rom_files(&s_auto_drv, m, nm, REGION_AUDIO_CPU_CARTRIDGE, &msz) ||
-        !append_rom_files(&s_auto_drv, v, nv, REGION_AUDIO_DATA_1, &vsz) ||
-        !append_crom_pairs(&s_auto_drv, c, nc, &csz)) {
-        zip_set_err("ROM_DEF overflow");
-        return NULL;
+    {
+        int p_linear = 0;
+        if (np == 1 && p[0].size == 0x200000u) {
+            p_linear = p2m_already_linear(z, p[0].name, p[0].crc);
+            if (p_linear)
+                printf("neo_zip: 2MiB P already linear (skip CONTINUE)\n");
+            else
+                printf("neo_zip: 2MiB P CONTINUE half-swap\n");
+        }
+        if (!append_rom_files(&s_auto_drv, p, np, REGION_MAIN_CPU_CARTRIDGE,
+                              &psz, p_linear) ||
+            !append_rom_files(&s_auto_drv, s, ns, REGION_FIXED_LAYER_CARTRIDGE,
+                             &ssz, 0) ||
+            !append_rom_files(&s_auto_drv, m, nm, REGION_AUDIO_CPU_CARTRIDGE,
+                             &msz, 0) ||
+            !append_rom_files(&s_auto_drv, v, nv, REGION_AUDIO_DATA_1,
+                             &vsz, 0) ||
+            !append_crom_pairs(&s_auto_drv, c, nc, &csz)) {
+            zip_set_err("ROM_DEF overflow");
+            return NULL;
+        }
     }
 
     s_auto_drv.romsize[REGION_MAIN_CPU_CARTRIDGE] = psz;
@@ -638,7 +691,7 @@ static void prog_plan(const ROM_DEF *drv, const char *stem)
     uint32_t sfix = drv->romsize[REGION_FIXED_LAYER_CARTRIDGE];
     uint32_t gfix = sfix >> 5;
     uint32_t spr = (tiles >> 11) * 4u;
-    int hit_p = key_hit(stem, "p", p);
+    int hit_p = key_hit(stem, "p2", p);
     int hit_m = key_hit(stem, "m", m);
     int hit_v = key_hit(stem, "v", v);
     int hit_s = key_hit(stem, "s", sfix) && key_hit(stem, "gfix", gfix);
@@ -743,6 +796,48 @@ static int stream_begin(flash_stream_t *st, const char *key, uint32_t total)
     page_reset();
     return store_data_begin(st, key, total) ? 1 : 0;
 }
+
+#ifndef HOST_BUILD
+static uint32_t flash_align_erase(uint32_t n)
+{
+    return (n + (NEO_FLASH_ERASE_ALIGN - 1u)) & ~(NEO_FLASH_ERASE_ALIGN - 1u);
+}
+
+/* Max bytes a Neo Geo cart may occupy in the QSPI cache:
+ *   flash_cache_usable_size()  — chip size minus OFW/layout reserve (64/63/60 MiB)
+ *   minus erase-aligned BIOS + neogeo.ro
+ * Returns 0 if the ABI is missing (old firmware) — caller should not refuse. */
+static uint32_t neo_flash_max_game_bytes(void)
+{
+    uint32_t usable = flash_cache_usable_size();
+    uint32_t reserved;
+
+    if (usable == 0)
+        return 0;
+
+    reserved = flash_align_erase(NEO_BIOS_FLASH_BYTES);
+    reserved += flash_align_erase(neo_flash_ro_size());
+    if (reserved >= usable)
+        return 0;
+    return usable - reserved;
+}
+
+/* Erase-aligned weight of one cart (each region is its own flash blob). */
+static uint32_t neo_flash_game_weight(const ROM_DEF *drv)
+{
+    uint32_t p = drv->romsize[REGION_MAIN_CPU_CARTRIDGE];
+    uint32_t m = drv->romsize[REGION_AUDIO_CPU_CARTRIDGE];
+    uint32_t v = drv->romsize[REGION_AUDIO_DATA_1];
+    uint32_t tiles = drv->romsize[REGION_SPRITES];
+    uint32_t sfix = drv->romsize[REGION_FIXED_LAYER_CARTRIDGE];
+    uint32_t gfix = sfix >> 5;
+    uint32_t spr = (tiles >> 11) * 4u;
+
+    return flash_align_erase(p) + flash_align_erase(m) + flash_align_erase(v) +
+           flash_align_erase(sfix) + flash_align_erase(gfix) +
+           flash_align_erase(tiles) + flash_align_erase(spr);
+}
+#endif /* !HOST_BUILD */
 
 static const uint8_t *stream_finish(flash_stream_t *st)
 {
@@ -855,7 +950,7 @@ static int ensure_raw_region(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     }
     memset(&st, 0, sizeof(st));
     if (!stream_begin(&st, key, expect)) {
-        zip_set_err("flash begin failed");
+        zip_set_err("ROM too large for flash");
         return 0;
     }
     if (!stream_members_raw(z, drv, region, &st)) {
@@ -938,7 +1033,7 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     if (!stream_begin(&st, key_s, sfix_sz) ||
         !append_bytes(&st, sfix_buf, sfix_sz)) {
         stream_abort(&st);
-        zip_set_err("sfix store failed");
+        zip_set_err("ROM too large for flash");
         return 0;
     }
     hit_s = stream_finish(&st);
@@ -952,7 +1047,7 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     if (!stream_begin(&st, key_g, gfix_sz) ||
         !append_bytes(&st, gfix_usage, gfix_sz)) {
         stream_abort(&st);
-        zip_set_err("gfix store failed");
+        zip_set_err("ROM too large for flash");
         return 0;
     }
     hit_g = stream_finish(&st);
@@ -1142,7 +1237,7 @@ static int ensure_tiles(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
 
     memset(&st, 0, sizeof(st));
     if (!stream_begin(&st, key_c, tiles)) {
-        zip_set_err("tiles begin failed");
+        zip_set_err("ROM too large for flash");
         return 0;
     }
     for (i = 0; i < np; i++) {
@@ -1165,7 +1260,7 @@ static int ensure_tiles(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     if (!stream_begin(&st, key_spr, spr_usage_sz) ||
         !append_bytes(&st, spr_usage, spr_usage_sz)) {
         stream_abort(&st);
-        zip_set_err("spr store failed");
+        zip_set_err("ROM too large for flash");
         return 0;
     }
     hit_spr = stream_finish(&st);
@@ -1237,9 +1332,29 @@ int neo_zip_flash_load(const char *zip_path)
 
     prog_plan(drv, stem);
     if (s_prog_steps) {
+#ifndef HOST_BUILD
+        uint32_t weight = neo_flash_game_weight(drv);
+        uint32_t max_game = neo_flash_max_game_bytes();
+
         printf("neo_zip: cache %u/%u bytes done, %u files left\n",
                (unsigned)s_prog_done, (unsigned)s_prog_total,
                (unsigned)s_prog_steps);
+        if (max_game && weight > max_game) {
+            printf("neo_zip: game needs %u bytes, max %u "
+                   "(usable=%u bios+ro reserved)\n",
+                   (unsigned)weight, (unsigned)max_game,
+                   (unsigned)flash_cache_usable_size());
+            zip_set_err("ROM too large for flash");
+            neo_zip_close(z);
+            neo_zip_set_scratch(NULL, 0);
+            ram_init();
+            return 0;
+        }
+#else
+        printf("neo_zip: cache %u/%u bytes done, %u files left\n",
+               (unsigned)s_prog_done, (unsigned)s_prog_total,
+               (unsigned)s_prog_steps);
+#endif
         snprintf(s_prog_hdr, sizeof(s_prog_hdr), "Neo Geo");
         prog_paint(prog_pct(), 1);
     } else
@@ -1247,7 +1362,7 @@ int neo_zip_flash_load(const char *zip_path)
 
     printf("neo_zip: loading %s → neogeo/%s/*\n", zip_path, stem);
 
-    if (!ensure_raw_region(z, drv, stem, "p", REGION_MAIN_CPU_CARTRIDGE,
+    if (!ensure_raw_region(z, drv, stem, "p2", REGION_MAIN_CPU_CARTRIDGE,
                            drv->romsize[REGION_MAIN_CPU_CARTRIDGE], &p, &p_sz) ||
         !ensure_raw_region(z, drv, stem, "m", REGION_AUDIO_CPU_CARTRIDGE,
                            drv->romsize[REGION_AUDIO_CPU_CARTRIDGE], &m, &m_sz) ||

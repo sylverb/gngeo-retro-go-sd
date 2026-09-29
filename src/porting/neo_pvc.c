@@ -26,6 +26,16 @@ static Uint16 *pvc_ram;
 static int pvc_want;
 static int pvc_on;
 
+Uint16 *neo_pvc_ram_ptr(void)
+{
+	return pvc_ram;
+}
+
+Uint32 neo_pvc_ram_bytes(void)
+{
+	return pvc_want ? (Uint32)PVC_RAM_BYTES : 0;
+}
+
 int neo_pvc_ensure_ram(void)
 {
 	if (!pvc_want)

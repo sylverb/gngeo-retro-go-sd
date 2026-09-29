@@ -24,6 +24,7 @@
 #include "gw_malloc.h"
 #include "neo_mem.h"
 #include "gw_flash_alloc.h"
+#include "neo_flash_ro.h"
 
 #ifndef HOST_BUILD
 #include "gw_core_bridge.h"
@@ -871,10 +872,49 @@ int gno_flash_load(const char *path)
     memory.vid.spr_cache.gno = NULL;
 
     gno_err[0] = 0;
+
+#ifndef HOST_BUILD
+    /* Refuse oversized XIP dumps before the long "Caching game…" pass.
+     * Same budget as ZIP: usable cache − BIOS − neogeo.ro. */
+    {
+        FILE *fz = fopen(path, "rb");
+        uint32_t usable = flash_cache_usable_size();
+        if (fz && usable) {
+            long fsz;
+            fseek(fz, 0, SEEK_END);
+            fsz = ftell(fz);
+            fclose(fz);
+            if (fsz > 0) {
+                uint32_t reserved = (0x20000u + 0x20000u + 0x10000u);
+                uint32_t ro = neo_flash_ro_size();
+                uint32_t max_game, need;
+                reserved = (reserved + 4095u) & ~4095u;
+                reserved += (ro + 4095u) & ~4095u;
+                max_game = (reserved < usable) ? (usable - reserved) : 0;
+                need = ((uint32_t)fsz + 4095u) & ~4095u;
+                if (max_game && need > max_game) {
+                    printf("gno: %s needs %u, max %u (usable=%u)\n",
+                           path, (unsigned)need, (unsigned)max_game,
+                           (unsigned)usable);
+                    gno_set_err("ROM too large for flash");
+                    return GN_FALSE;
+                }
+            }
+        } else if (fz) {
+            fclose(fz);
+        }
+    }
+#endif
+
     mapped = odroid_overlay_cache_file_in_flash(path, &size, false);
-    if (!mapped || size < 24) {
+    if (!mapped) {
         printf("gno: flash cache failed for %s\n", path);
-        gno_set_err("flash cache failed");
+        gno_set_err("ROM too large for flash");
+        return GN_FALSE;
+    }
+    if (size < 24) {
+        printf("gno: truncated .gno (%u bytes)\n", (unsigned)size);
+        gno_set_err("bad .gno");
         return GN_FALSE;
     }
 #ifndef HOST_BUILD

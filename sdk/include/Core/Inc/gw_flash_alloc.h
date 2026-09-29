@@ -33,6 +33,14 @@ void flash_alloc_reset();
 /* Forget which files are being read. The device does this by rebooting between
  * games; a host test has to ask. */
 void flash_alloc_forget_live_files(void);
+
+/* Bytes available for the ROM/data cache: external flash size minus the
+ * reserved bottom (stock OFW / dual-firmware layout — typically 0, 1 or
+ * 4 MiB on a 64 MiB chip → 64 / 63 / 60 MiB of cache). Metadata lives on
+ * the SD card; every byte of this window can hold game data (payloads are
+ * erase-block aligned when programmed). */
+uint32_t flash_cache_usable_size(void);
+
 uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb);
 
 /* Derived-data blobs: same flash cache, RAM source, caller-chosen key

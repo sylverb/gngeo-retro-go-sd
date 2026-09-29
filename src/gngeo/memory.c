@@ -498,17 +498,46 @@ void mem68k_store_invalid_long(Uint32 addr, Uint32 data) {
 }
 
 /**** RAM ****/
+
+/*
+ * $10FD80 bit7 = INT1 owner (0=cart VBlank, 1=BIOS). mslug5 soft-locks if a
+ * gameplay wait runs while bit7 stays set — log every change for diagnosis.
+ */
+static void neo_trace_fd80_write(Uint8 oldv, Uint8 newv)
+{
+	Uint32 pc;
+
+	if (oldv == newv)
+		return;
+	pc = cpu_68k_getpc() & 0xffffffu;
+	if ((oldv ^ newv) & 0x80)
+		printf("neo: $10FD80 %02x→%02x INT1=%s pc=%06x\n",
+		       oldv, newv, (newv & 0x80) ? "BIOS" : "CART", pc);
+	else
+		printf("neo: $10FD80 %02x→%02x pc=%06x\n", oldv, newv, pc);
+}
+
 void mem68k_store_ram_byte(Uint32 addr, Uint8 data) {
+    Uint8 oldv;
+
     addr &= 0xffff;
+    if (addr == 0xfd80)
+	    oldv = memory.ram[addr ^ 1];
     WRITE_BYTE_ROM(memory.ram + addr,data);
-    return;
+    if (addr == 0xfd80)
+	    neo_trace_fd80_write(oldv, (Uint8)data);
 }
 
 void mem68k_store_ram_word(Uint32 addr, Uint16 data) {
-    //printf("Store rom word %08x %04x\n",addr,data);
+    Uint8 oldv;
+
     addr &= 0xffff;
+    if (addr == 0xfd80)
+	    oldv = memory.ram[addr ^ 1];
     WRITE_WORD_ROM(memory.ram + addr,data);
-    return;
+    /* Even word @ $FD80: low byte of the 68k word is logical $FD80 after LE store. */
+    if (addr == 0xfd80)
+	    neo_trace_fd80_write(oldv, memory.ram[addr ^ 1]);
 }
 
 LONG_STORE(mem68k_store_ram)

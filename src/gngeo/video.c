@@ -428,8 +428,13 @@ static __inline__ void draw_fix_char(unsigned char *buf, int start, int end) {
 	SDL_Rect clip;
 	int ystart = 1, yend = 32;
 
-	//banked = (current_fix == memory.rom.game_sfix.p && memory.rom.game_sfix.size > 0x1000) ? 1 : 0;
-	banked = (current_fix == memory.rom.game_sfix.p && neogeo_fix_bank_type && memory.rom.game_sfix.size > 0x1000) ? 1 : 0;
+	/*
+	 * Match MAME: banking only when cart FIX > 128 KiB (addr_mask > 0x1ffff).
+	 * mslug5 sets bank_type=1 but ships a 128 KiB S extract — enabling the
+	 * Garou bank math there adds 0x3000 and skips every tile.
+	 */
+	banked = (current_fix == memory.rom.game_sfix.p && neogeo_fix_bank_type &&
+		  memory.rom.game_sfix.size > 0x20000) ? 1 : 0;
 	//if (banked && conf.rom_type==MVS_CMC42)
 	if (banked && neogeo_fix_bank_type == 1) {
 		int garoubank = 0;

@@ -167,6 +167,12 @@ void store_data_abort(flash_stream_t *st)
     st->flash_address = 0;
 }
 
+uint32_t flash_cache_usable_size(void)
+{
+    /* Host has no OFW reserve — pretend a full 64 MiB chip. */
+    return 64u * 1024u * 1024u;
+}
+
 void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress)
 {
     static int last = -1;

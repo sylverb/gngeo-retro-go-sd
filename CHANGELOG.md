@@ -1,25 +1,30 @@
 # Changelog
 
-## [v0.0.3]
+## [v0.0.4]
 
 Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
 If sound does not start, restart the game.
 
 ### Added
 
-- MAME Neo Geo `.zip` ROMs on device and host (QSPI region cache, auto-detect).
-- Offline `tools/decrypt_neogeo_zip` for encrypted CMC42/50 / SMA / PVC / PCM2
-  sets → plain zip (`make decrypt-zip`).
-- Runtime PVC and SMA bank handlers so decrypted sets boot (mslug5, svc,
-  kof2003, mslug3, garou, kof99, kof2000, …).
+- Nothing.
 
 ### Changed
 
-- Updated Neo Geo header logo.
+- Nothing.
 
 ### Fixed
 
-- Nothing.
+- Refuse to boot a ROM that does not fit in the remaining QSPI flash cache
+  (clear error instead of failing mid-cache).
+- Decrypted 2 MiB P sets (`bangbead_dec`, `ganryu_dec`, …): skip MAME
+  `CONTINUE` half-swap when the zip is already memory-order (was double-swapped
+  → white screen). Program cache key bumped to `p2`.
+- `decrypt_neogeo_zip`: mirror short CMC50 M1 dumps to 512 KiB before decrypt
+  (fixes kof2000 match music / garbage ADPCM banks).
+- `decrypt_neogeo_zip`: write CMC50 M1 as plain 512 KiB (not the 0x90000
+  runtime banking image) so Z80 banks match FBNeo/neo_zip — fixes kof2003
+  looping music / missing SFX and other CMC50 audio.
 
 ### Install
 

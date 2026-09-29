@@ -12,6 +12,9 @@ extern "C" {
  * Returns 0 on failure (missing file). Host: no-op success. */
 int neo_load_flash_cold(void);
 
+/* Size of the mapped neogeo.ro blob (0 before load / on host). */
+uint32_t neo_flash_ro_size(void);
+
 #ifdef __cplusplus
 }
 #endif

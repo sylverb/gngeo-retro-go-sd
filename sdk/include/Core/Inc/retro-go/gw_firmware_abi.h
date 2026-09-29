@@ -663,6 +663,12 @@ typedef struct {
     bool (*rg_storage_mkdir)(const char *dir);
     const char *(*rg_dirname)(const char *path);
 
+    /* ================================================================
+     * v2 append: flash cache capacity (extflash − reserved OFW / layout).
+     * NULL on SD_CARD=0 builds (same as the other flash_alloc slots).
+     * ================================================================ */
+    uint32_t (*flash_cache_usable_size)(void);
+
 } gw_firmware_abi_t;
 
 /* The firmware publishes this instance at GW_FIRMWARE_ABI_ADDRESS via the

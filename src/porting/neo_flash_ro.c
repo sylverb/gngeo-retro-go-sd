@@ -80,21 +80,35 @@ static void neo_patch_ram_to_flash(uint8_t *flash, uint32_t flash_len)
     }
 }
 
+static uint32_t s_neo_ro_size;
+
+uint32_t neo_flash_ro_size(void)
+{
+    return s_neo_ro_size;
+}
+
 int neo_load_flash_cold(void)
 {
     uint32_t len = 0;
     uint8_t *p;
 
+    s_neo_ro_size = 0;
     p = odroid_overlay_cache_file_in_flash_relocate(
         NEO_FLASH_RO_PATH, &len, false, neo_flash_relocate_cb);
     if (!p || len == 0) {
         printf("neogeo: missing %s\n", NEO_FLASH_RO_PATH);
         return 0;
     }
+    s_neo_ro_size = len;
     neo_patch_ram_to_flash(p, len);
     return 1;
 }
 #else
+uint32_t neo_flash_ro_size(void)
+{
+    return 0;
+}
+
 int neo_load_flash_cold(void)
 {
     return 1;
