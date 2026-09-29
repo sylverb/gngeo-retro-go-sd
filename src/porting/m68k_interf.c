@@ -322,7 +322,16 @@ void cpu_68k_bankswitch(Uint32 address)
     remount_bank_window();
 }
 
-void cpu_68k_reset(void) { m68k_pulse_reset(); }
+void cpu_68k_reset(void)
+{
+    m68k_pulse_reset();
+    /* pulse_reset leaves the master cycle count alone; a near-wrap value
+     * makes cpu_68k_run's (start + timeslice) overflow so m68k_run sees
+     * cycles >= target and returns without executing — permanent freeze. */
+    m68k.cycles = 0;
+    m68k.cycle_end = 0;
+    frame_cycle_base = 0;
+}
 void cpu_68k_mkstate(gzFile gzf, int mode)
 {
     if (!m68k_core)
@@ -514,11 +523,26 @@ void cpu_68k_init(void)
 
 int cpu_68k_run(Uint32 nb_cycle)
 {
-    unsigned int start = m68k.cycles;
+    unsigned int start;
+    unsigned int target;
+
+    /* Busy-wait softlocks (mslug5 frame sync) burn ~200k cycles/frame. After
+     * ~20k frames the uint32 master count wraps; start+nb overflows to a small
+     * target and m68k_run() bails because cycles >= target — CPU frozen solid
+     * even through watchdog reset (which did not clear cycles). */
+    if (nb_cycle == 0)
+        return 0;
+    if (m68k.cycles > (~0u - nb_cycle)) {
+        m68k.cycles = 0;
+        frame_cycle_base = 0;
+    }
+
+    start = m68k.cycles;
     frame_cycle_base = start;
-    m68k_run(start + nb_cycle);
+    target = start + nb_cycle;
+    m68k_run(target);
     cycles_used = m68k.cycles - start;
-    return (int)(m68k.cycles - (start + nb_cycle));
+    return (int)(m68k.cycles - target);
 }
 
 Uint32 cpu_68k_getpc(void) { return (Uint32)m68k.pc; }

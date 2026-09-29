@@ -25,6 +25,9 @@ If sound does not start, restart the game.
 - `decrypt_neogeo_zip`: write CMC50 M1 as plain 512 KiB (not the 0x90000
   runtime banking image) so Z80 banks match FBNeo/neo_zip — fixes kof2003
   looping music / missing SFX and other CMC50 audio.
+- mslug5 softlock: 68k master cycle counter could wrap after a long frame-wait
+  busy-loop; `m68k_run` then no-op'd forever (watchdog reset did not clear
+  cycles). Rebase cycles before overflow and on CPU reset.
 
 ### Install
 
