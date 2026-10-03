@@ -249,6 +249,134 @@ static int name_is(const char *name, const char *prefix)
 			(name[n] == '\0' || name[n] == '_' || name[n] == '-'));
 }
 
+static char neo_tolower(char c)
+{
+	return (c >= 'A' && c <= 'Z') ? (char)(c + ('a' - 'A')) : c;
+}
+
+static int neo_mem_eq(const char *a, const char *b)
+{
+	while (*a && *b) {
+		if (neo_tolower(*a) != neo_tolower(*b))
+			return 0;
+		a++;
+		b++;
+	}
+	return *a == '\0' && *b == '\0';
+}
+
+static int neo_mem_startswith(const char *s, const char *prefix, size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		if (!s[i] || neo_tolower(s[i]) != neo_tolower(prefix[i]))
+			return 0;
+	}
+	return 1;
+}
+
+/*
+ * Exact zip-member → shortname. MAME P chips (decrypt_neogeo_zip detect=)
+ * plus common PCB / clone P names. decrypt_neogeo_zip rewrites members to
+ * {shortname}-p1.p1 — handled below by prefix scan.
+ */
+static const struct {
+	const char *member;
+	const char *game;
+} s_member_exact[] = {
+	{ "251-p1.p1", "kof99" },
+	{ "253-ep1.p1", "garou" },
+	{ "256-pg1.p1", "mslug3" },
+	{ "257-p1.p1", "kof2000" },
+	{ "262-p1-08-e0.p1", "kof2001" },
+	{ "265-p1.p1", "kof2002" },
+	{ "263-p1.p1", "mslug4" },
+	{ "264-p1.p1", "rotd" },
+	{ "pn202.p1", "pnyaa" },
+	{ "252-p1.p1", "ganryu" },
+	{ "254-p1.p1", "s1945p" },
+	{ "255-p1.p1", "preisle2" },
+	{ "259-p1.p1", "bangbead" },
+	{ "260-p1.p1", "nitd" },
+	{ "070-p1.p1", "zupapa" },
+	{ "261-ph1.p1", "sengoku3" },
+	{ "268-p1cr.p1", "mslug5" },
+	{ "268-p1c.p1", "mslug5" },
+	{ "269-p1.p1", "svc" },
+	{ "271-p1c.p1", "kof2003" },
+	{ "271-p1.p1", "kof2003" },
+	{ "270-p1.p1", "samsho5" },
+	{ "272-p1.p1", "samsh5sp" },
+	{ "242-p1.p1", "kof98" },
+	/* Longer clone / PCB ids first in the prefix list below. */
+	{ NULL, NULL }
+};
+
+/* Longest-first so mslug3h wins over mslug3, kof2000n over kof2000, etc. */
+static const char *const s_game_prefixes[] = {
+	"svcsplus",
+	"samsh5sp",
+	"preisle2",
+	"sengoku3",
+	"kof2003",
+	"kof2002",
+	"kof2001",
+	"kof2000n",
+	"kof2000",
+	"mslug5",
+	"ms5pcb",
+	"ms5plus",
+	"mslug4",
+	"ms4plus",
+	"mslug3h",
+	"mslug3n",
+	"mslug3b",
+	"mslug3",
+	"kof99n",
+	"kof99",
+	"garoubl",
+	"garou",
+	"bangbead",
+	"s1945p",
+	"samsho5",
+	"matrim",
+	"ganryu",
+	"zupapa",
+	"pnyaa",
+	"nitd",
+	"rotd",
+	"svc",
+	"kof98",
+	NULL
+};
+
+const char *neo_game_match_member(const char *member_basename)
+{
+	const char *base;
+	size_t i;
+
+	if (!member_basename || !member_basename[0])
+		return NULL;
+
+	base = strrchr(member_basename, '/');
+	base = base ? base + 1 : member_basename;
+
+	for (i = 0; s_member_exact[i].member; i++) {
+		if (neo_mem_eq(base, s_member_exact[i].member))
+			return s_member_exact[i].game;
+	}
+
+	/* decrypt_neogeo_zip / FBNeo-style: {shortname}-p1.p1 (any -p* chip). */
+	for (i = 0; s_game_prefixes[i]; i++) {
+		size_t n = strlen(s_game_prefixes[i]);
+		if (neo_mem_startswith(base, s_game_prefixes[i], n) &&
+		    base[n] == '-' &&
+		    (base[n + 1] == 'p' || base[n + 1] == 'P'))
+			return s_game_prefixes[i];
+	}
+	return NULL;
+}
+
 void neo_game_special_init(const char *name)
 {
 	neo_pvc_reset();
@@ -261,7 +389,7 @@ void neo_game_special_init(const char *name)
 	if (!name || !name[0])
 		return;
 
-	/* PVC carts (decrypted zip stems may be mslug5_dec). */
+	/* PVC carts. */
 	if (name_is(name, "mslug5") || !strcmp(name, "ms5pcb") ||
 	    name_is(name, "svc") || !strcmp(name, "svcsplus") ||
 	    name_is(name, "kof2003")) {

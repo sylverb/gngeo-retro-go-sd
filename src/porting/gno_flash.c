@@ -749,7 +749,7 @@ static void apply_bios_vectors(GAME_ROMS *r)
     vector_patched = 1;
 }
 
-int neo_rom_bind_regions(const char *stem,
+int neo_rom_bind_regions(const char *game_id,
                          const uint8_t *p, uint32_t p_sz,
                          const uint8_t *m, uint32_t m_sz,
                          const uint8_t *v, uint32_t v_sz,
@@ -760,7 +760,7 @@ int neo_rom_bind_regions(const char *stem,
 {
     GAME_ROMS *r = &memory.rom;
 
-    if (!stem || !p || !m || !v || !s || !gfix || !c || !spr) {
+    if (!game_id || !p || !m || !v || !s || !gfix || !c || !spr) {
         gno_set_err("bad region ptrs");
         return GN_FALSE;
     }
@@ -774,7 +774,7 @@ int neo_rom_bind_regions(const char *stem,
     memory.vid.spr_cache.gno = NULL;
     gno_err[0] = 0;
 
-    snprintf(game_name_storage, sizeof(game_name_storage), "%s", stem);
+    snprintf(game_name_storage, sizeof(game_name_storage), "%s", game_id);
     r->info.name = game_name_storage;
     r->info.longname = game_name_storage;
     r->info.flags = 0;
@@ -800,7 +800,7 @@ int neo_rom_bind_regions(const char *stem,
     memory.nb_of_tiles = r->tiles.size >> 7;
 
     printf("neo: game=%s p=%u m=%u v=%u s=%u c=%u\n",
-           stem, (unsigned)p_sz, (unsigned)m_sz, (unsigned)v_sz,
+           game_id, (unsigned)p_sz, (unsigned)m_sz, (unsigned)v_sz,
            (unsigned)s_sz, (unsigned)c_sz);
 
 #ifndef HOST_BUILD
@@ -839,8 +839,8 @@ int neo_rom_bind_regions(const char *stem,
     apply_bios_vectors(r);
     conf.game = r->info.name;
 
-    /* ZIP/GNO path never runs init_roms(); apply PVC + fix-bank by name. */
-    neo_game_special_init(stem);
+    /* ZIP path never runs init_roms(); apply PVC + fix-bank by detected id. */
+    neo_game_special_init(game_id);
 
     memset(memory.vid.ram, 0, sizeof(memory.vid.ram));
     memset(memory.vid.pal_neo, 0, sizeof(memory.vid.pal_neo));
@@ -1006,6 +1006,8 @@ int gno_flash_load(const char *path)
     apply_bios_vectors(r);
 
     conf.game = r->info.name;
+    /* .gno embeds the short name (8 chars); zip path uses member detect. */
+    neo_game_special_init(r->info.name);
 
     /* Palette / fix-layer pointers (normally set in roms.c init_game). */
     memset(memory.vid.ram, 0, sizeof(memory.vid.ram));

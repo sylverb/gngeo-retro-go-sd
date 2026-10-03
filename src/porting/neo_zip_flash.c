@@ -18,6 +18,7 @@
 #include "gno_flash.h"
 #include "transpack.h"
 #include "neo_zip.h"
+#include "neo_pvc.h"
 #include "gw_malloc.h"
 #include "neo_flash_ro.h"
 
@@ -481,6 +482,39 @@ static void path_stem(const char *path, char *out, size_t out_sz)
         n = out_sz - 1;
     memcpy(out, base, n);
     out[n] = 0;
+}
+
+/* Identify the cart from chip filenames inside the zip (not the .zip stem). */
+static int detect_game_from_zip(neo_zip_t *z, char *out, size_t out_sz)
+{
+    int nfiles, fi;
+    const char *best = NULL;
+    size_t best_len = 0;
+
+    if (!z || !out || out_sz < 2)
+        return 0;
+    nfiles = neo_zip_num_files(z);
+    for (fi = 0; fi < nfiles; fi++) {
+        char name[48];
+        const char *id;
+        size_t len;
+        uint32_t sz = 0, crc = 0;
+        if (!neo_zip_stat(z, fi, name, sizeof(name), &sz, &crc))
+            continue;
+        id = neo_game_match_member(name);
+        if (!id)
+            continue;
+        len = strlen(id);
+        /* Prefer longer ids when several members match (mslug3h > mslug3). */
+        if (!best || len > best_len) {
+            best = id;
+            best_len = len;
+        }
+    }
+    if (!best)
+        return 0;
+    snprintf(out, out_sz, "%s", best);
+    return 1;
 }
 
 static void make_key(char *out, size_t out_sz, const char *stem, const char *suf)
@@ -1334,6 +1368,7 @@ static int refresh_zip_scratch(uint32_t scratch_need)
 int neo_zip_flash_load(const char *zip_path)
 {
     char stem[32];
+    char game_id[32];
     const ROM_DEF *drv;
     neo_zip_t *z;
     const uint8_t *p, *m, *v, *s, *gfix, *c, *spr;
@@ -1357,6 +1392,15 @@ int neo_zip_flash_load(const char *zip_path)
         zip_set_err("zip open failed");
         ram_init();
         return 0;
+    }
+
+    /* PVC/SMA/fix_bank from chip names inside the zip; stem is cache key only. */
+    if (detect_game_from_zip(z, game_id, sizeof(game_id)))
+        printf("neo_zip: game id '%s' (from zip members; file stem '%s')\n",
+               game_id, stem);
+    else {
+        snprintf(game_id, sizeof(game_id), "%s", stem);
+        printf("neo_zip: game id '%s' (fallback to zip stem)\n", game_id);
     }
 
     drv = rom_def_from_zip(z, stem);
@@ -1444,7 +1488,7 @@ int neo_zip_flash_load(const char *zip_path)
     if (s_prog_steps)
         prog_finish();
 
-    if (!neo_rom_bind_regions(stem, p, p_sz, m, m_sz, v, v_sz,
+    if (!neo_rom_bind_regions(game_id, p, p_sz, m, m_sz, v, v_sz,
                               s, s_sz, gfix, g_sz, c, c_sz, spr, spr_sz)) {
         printf("neo_zip: bind failed: %s\n", gno_flash_last_error());
         zip_set_err(gno_flash_last_error());

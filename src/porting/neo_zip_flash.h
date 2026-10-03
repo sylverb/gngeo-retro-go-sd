@@ -5,8 +5,9 @@
 int neo_zip_flash_load(const char *zip_path);
 const char *neo_zip_flash_last_error(void);
 
-/* Bind flash-mapped cart regions + load system BIOS (shared with .gno). */
-int neo_rom_bind_regions(const char *stem,
+/* Bind flash-mapped cart regions + load system BIOS (shared with .gno).
+ * game_id drives PVC/SMA/fix_bank (from zip members or .gno header). */
+int neo_rom_bind_regions(const char *game_id,
                          const uint8_t *p, uint32_t p_sz,
                          const uint8_t *m, uint32_t m_sz,
                          const uint8_t *v, uint32_t v_sz,

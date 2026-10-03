@@ -73,9 +73,9 @@ make decrypt-zip    # → tools/decrypt_neogeo_zip (+ cmc42/cmc50.xor)
 ```
 
 Supports the encrypted MAME sets in `init_func_table` plus PVC siblings
-(`svc`, `kof2003`, `samsho5`, `samsh5sp`). SMA games still need the SMA
-bank handler at runtime (wired in `neo_game_special_init`). Requires the
-`zip` CLI for the output archive.
+(`svc`, `kof2003`, `samsho5`, `samsh5sp`). SMA/PVC/`fix_bank` handlers are
+picked from **chip names inside the zip** (not the `.zip` filename). Requires
+the `zip` CLI for the output archive.
 
 Controls: arrows = D-pad, `X`/`Z`/`S`/`A` = Neo A/B/C/D, Enter = Start,
 Shift = Select (coin). Esc quits.

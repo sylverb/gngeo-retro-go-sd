@@ -12,6 +12,10 @@
 
 ### Changed
 
+- PVC / SMA / `fix_bank` detection uses **chip filenames inside the .zip**
+  (MAME `268-p1cr.p1`, decrypt `mslug5-p1.p1`, …), not the archive stem.
+  Renaming `mslug5_dec.zip` → `foo.zip` still arms the right handlers; zip stem
+  remains the QSPI cache key only. Fallback to stem if no member matches.
 - Core artifacts renamed `neogeo.*` → `gngeo.bin` / `gngeo.ro` / `gngeo_host`
   (SD: `/cores/gngeo.bin` + `/cores/gngeo.ro`). ROM/BIOS dirs stay `/roms|bios/neogeo/`.
 - Default UniBIOS boot remains AES + Europe (CONSOLE); MVS is opt-in.
