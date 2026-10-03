@@ -6,11 +6,15 @@ Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
 
 ### Added
 
-- Nothing.
+- Pause-menu options **System** (AES / MVS) and **Region** (Japan / USA /
+  Europe), persisted via core settings. AES/MVS drives `STATUS_A`/`STATUS_B` and
+  `REG_BRDFIX`; region is stamped into UniBIOS backup RAM / memcard (`V2`
+  header). Confirm with A to soft-reset and apply (clears 68k RAM so UniBIOS
+  re-reads prefs; STATUS is set before BIOS boot — was stuck MVS/`0xFF`).
 
 ### Changed
 
-- Nothing.
+- Default UniBIOS boot remains AES + Europe (CONSOLE); MVS is opt-in.
 
 ### Fixed
 

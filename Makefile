@@ -28,6 +28,7 @@ $(PORT)/zip/miniz.c \
 $(PORT)/neo_flash_ro.c \
 $(PORT)/neo_frame.c \
 $(PORT)/event.c \
+$(PORT)/neo_settings.c \
 $(PORT)/conf_stub.c \
 $(PORT)/neo_state.c \
 $(PORT)/gnutil_stub.c \

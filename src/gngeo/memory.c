@@ -27,6 +27,7 @@
 #include "transpack.h"
 #include "gno_flash.h"
 #include "neo_pvc.h"
+#include "neo_settings.h"
 
 #ifdef GP2X
 #include "ym2610-940/940shared.h"
@@ -735,10 +736,10 @@ void mem68k_store_setting_byte(Uint32 addr, Uint8 data) {
     if (addr == 0x000b) { /* select board fix */
         /*
          * AES has no board SFIX — REG_BRDFIX is a no-op (MAME/FBNeo AES).
-         * Matched to AES STATUS_A (CONSOLE default). Honouring BRDFIX would
-         * switch to board tiles while UniBIOS still writes cart-S codes.
+         * On MVS, honour BRDFIX → board sfix. On AES, stay on cart S ROM so
+         * UniBIOS CONSOLE FIX codes match the tiles they index.
          */
-        if (memory.rom.game_sfix.p) {
+        if (neo_settings_is_aes() && memory.rom.game_sfix.p) {
             current_fix = memory.rom.game_sfix.p;
             fix_usage = memory.fix_game_usage;
             memory.vid.currentfix = 1;

@@ -119,11 +119,13 @@ void neogeo_reset(void) {
 	sound_code = 0;
 	pending_command = 0;
 	result_code = 0;
-	/* Active-low inputs — BSS 0 looks like all buttons held (UniBIOS B+C+D test). */
-	memory.intern_p1 = 0xFF;
-	memory.intern_p2 = 0xFF;
-	memory.intern_coin = 0xFF;
-	memory.intern_start = 0xFF;
+	/*
+	 * Active-low inputs — BSS/0xFF looks like all buttons held (UniBIOS
+	 * B+C+D test). Do NOT leave STATUS at 0xFF: bits 3–4/7 read as MVS and
+	 * UniBIOS boots Arcade before the first input frame. neo_set_input
+	 * applies AES/MVS from the System option.
+	 */
+	neo_set_input(0, 0, 0);
 #ifdef ENABLE_940T
 	shared_ctl->sound_code = sound_code;
 	shared_ctl->pending_command = pending_command;

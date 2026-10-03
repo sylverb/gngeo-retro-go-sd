@@ -867,6 +867,25 @@ static void stream_abort(flash_stream_t *st)
     store_data_abort(st);
 }
 
+static int zip_read_fully(neo_zip_file_t *f, void *dst, uint32_t expect)
+{
+    uint8_t *p = (uint8_t *)dst;
+    uint32_t got = 0;
+    while (got < expect) {
+        int n = (int)(expect - got);
+        int r;
+        if (n > 4096)
+            n = 4096;
+        r = neo_zip_fread(f, p + got, n);
+        if (r <= 0)
+            return 0;
+        got += (uint32_t)r;
+        if (!prog_bump((uint32_t)r))
+            return 0;
+    }
+    return 1;
+}
+
 static neo_zip_file_t *zip_open_member(neo_zip_t *z, const char *name, uint32_t crc)
 {
     neo_zip_file_t *f = neo_zip_fopen(z, name, crc);
@@ -977,6 +996,7 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     uint32_t gfix_sz = sfix_sz >> 5;
     uint32_t got_s = 0, got_g = 0;
     const uint8_t *hit_s, *hit_g;
+    uint8_t *sfix_buf;
     uint8_t *gfix_usage;
     flash_stream_t st;
     neo_zip_file_t *fs = NULL;
@@ -1011,60 +1031,31 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     if (!prog_next_file(sname))
         return 0;
 
-    /* Convert is 32 B/tile — stream zip→flash so 512 KiB S1 (kof2000/2003)
-     * never needs a full RAM staging buffer on top of inflate scratch. */
+    sfix_buf = (uint8_t *)ram_malloc(sfix_sz);
     gfix_usage = (uint8_t *)ram_calloc(1, gfix_sz);
-    if (!gfix_usage) {
-        zip_set_err("OOM staging gfix");
+    if (!sfix_buf || !gfix_usage) {
+        zip_set_err("OOM staging sfix");
         return 0;
     }
 
     fs = zip_open_member(z, sname, scrc);
-    if (!fs) {
-        zip_set_err("sfix open failed");
+    if (!fs || !zip_read_fully(fs, sfix_buf, sfix_sz)) {
+        if (fs)
+            neo_zip_fclose(fs);
+        zip_set_err(fs ? "sfix read failed" : "sfix open failed");
         return 0;
     }
+    neo_zip_fclose(fs);
+    /* Convert is quick vs flash; attribute progress to the store below. */
+    convert_sfix_inplace(sfix_buf, (int)sfix_sz, gfix_usage);
+
     memset(&st, 0, sizeof(st));
-    if (!stream_begin(&st, key_s, sfix_sz)) {
-        neo_zip_fclose(fs);
+    if (!stream_begin(&st, key_s, sfix_sz) ||
+        !append_bytes(&st, sfix_buf, sfix_sz)) {
         stream_abort(&st);
         zip_set_err("ROM too large for flash");
         return 0;
     }
-    {
-        uint32_t left = sfix_sz;
-        uint32_t gi = 0;
-        uint8_t tile[32];
-
-        while (left) {
-            uint32_t chunk = left > sizeof(tile) ? (uint32_t)sizeof(tile) : left;
-            int r = neo_zip_fread(fs, tile, (int)chunk);
-            if (r != (int)chunk) {
-                neo_zip_fclose(fs);
-                stream_abort(&st);
-                zip_set_err("sfix read failed");
-                return 0;
-            }
-            if (!prog_bump(chunk)) {
-                neo_zip_fclose(fs);
-                stream_abort(&st);
-                return 0;
-            }
-            if (chunk == 32) {
-                convert_sfix_inplace(tile, 32,
-                                      gfix_usage ? gfix_usage + gi : NULL);
-                gi++;
-            }
-            if (!append_bytes(&st, tile, chunk)) {
-                neo_zip_fclose(fs);
-                stream_abort(&st);
-                zip_set_err("ROM too large for flash");
-                return 0;
-            }
-            left -= chunk;
-        }
-    }
-    neo_zip_fclose(fs);
     hit_s = stream_finish(&st);
     if (!hit_s) {
         zip_set_err("sfix finish failed");
@@ -1402,8 +1393,6 @@ int neo_zip_flash_load(const char *zip_path)
                (unsigned)s_prog_steps);
 #endif
         snprintf(s_prog_hdr, sizeof(s_prog_hdr), "Neo Geo");
-        /* progress==0 clears the B-cancel latch from a previous attempt. */
-        (void)odroid_overlay_draw_progress_bar_cancellable(s_prog_hdr, 0);
         if (!prog_paint(prog_pct(), 1)) {
             neo_zip_close(z);
             neo_zip_set_scratch(NULL, 0);
@@ -1430,7 +1419,8 @@ int neo_zip_flash_load(const char *zip_path)
         return 0;
     }
 
-    /* Drop gfix staging (+ inflate scratch) before spr_usage (~64 KiB). */
+    /* sfix/gfix staging (~132 KiB) must be dropped before spr_usage
+     * (64 KiB): together with inflate scratch they exceed residual RAM_EMU. */
     if (!refresh_zip_scratch(scratch_need)) {
         neo_zip_close(z);
         ram_init();

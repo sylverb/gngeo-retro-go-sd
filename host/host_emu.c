@@ -68,6 +68,8 @@ static uint32_t lcd_refresh_hz = 60;
 static uint32_t frame_start_ms;
 static int quit_requested;
 static int32_t settings_beep = 1;
+static int32_t settings_neo_hw = -1;     /* -1 = unset → default AES */
+static int32_t settings_neo_region = -1; /* -1 = unset → default Europe */
 static state_handler_t host_load_state_cb;
 static state_handler_t host_save_state_cb;
 static const int host_default_slot = 0;
@@ -873,15 +875,27 @@ bool odroid_system_emu_save_state(int slot)
 
 int32_t odroid_settings_app_int32_get(const char *key, int32_t value_default)
 {
-    if (key && strcmp(key, "beep") == 0)
+    if (!key)
+        return value_default;
+    if (strcmp(key, "beep") == 0)
         return settings_beep;
+    if (strcmp(key, "neo_hw") == 0)
+        return settings_neo_hw >= 0 ? settings_neo_hw : value_default;
+    if (strcmp(key, "neo_region") == 0)
+        return settings_neo_region >= 0 ? settings_neo_region : value_default;
     return value_default;
 }
 
 void odroid_settings_app_int32_set(const char *key, int32_t value)
 {
-    if (key && strcmp(key, "beep") == 0)
+    if (!key)
+        return;
+    if (strcmp(key, "beep") == 0)
         settings_beep = value;
+    else if (strcmp(key, "neo_hw") == 0)
+        settings_neo_hw = value;
+    else if (strcmp(key, "neo_region") == 0)
+        settings_neo_region = value;
 }
 
 uint8_t odroid_settings_cpu_oc_level_get(void) { return 0; }

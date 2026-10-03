@@ -41,6 +41,10 @@ Put these on the SD card (same names work on host):
 Also accepted: `/retro-go/bios/neogeo/`. External BIOS **overrides** any
 BIOS/sfix/000-lo baked into a `.gno`, so every game shares one UniBIOS.
 
+In-game pause menu: **System** (AES / MVS) and **Region** (Japan / USA /
+Europe) — saved for the core. Press A on the option to soft-reset and apply.
+Default is AES + Europe (UniBIOS CONSOLE).
+
 ## Host preview
 
 ```bash

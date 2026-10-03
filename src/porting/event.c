@@ -3,6 +3,7 @@
 #include "emu.h"
 #include "config.h"
 #include "gnutil.h"
+#include "neo_settings.h"
 
 Uint8 joy_state[2][GN_MAX_KEY];
 
@@ -22,17 +23,20 @@ void neo_set_input(Uint8 p1_buttons, Uint8 start, Uint8 coin)
     memory.intern_p2 = 0xFF;
 
     /*
-     * Present AES hardware to UniBIOS so it defaults to CONSOLE (EURO/CONSOLE
-     * with empty memcard — see UniBIOS AES notes).
      * REG_STATUS_A ($320001): FBNeo MVS=0x3F, AES=0x3F&~0x18 (bits 3–4).
      * REG_STATUS_B bit15 via intern_start bit7: MVS=1, AES=0.
+     * Driven by the persistent System option (AES → UniBIOS CONSOLE).
      * Select shares COIN and also lowers intern_start bit 1 (UniBIOS 1.3+).
      */
-    memory.intern_coin = (Uint8)(0x3F & ~0x18);
+    if (neo_settings_is_aes()) {
+        memory.intern_coin = (Uint8)(0x3F & ~0x18);
+        memory.intern_start = 0x0F; /* bit7 clear = AES */
+    } else {
+        memory.intern_coin = 0x3F;
+        memory.intern_start = 0x8F; /* bit7 set = MVS */
+    }
     if (coin)
         memory.intern_coin &= (Uint8)~0x01; /* P1 coin */
-
-    memory.intern_start = 0x0F; /* bit7 clear = AES */
     if (start)
         memory.intern_start &= (Uint8)~0x01; /* P1 start */
     if (coin)

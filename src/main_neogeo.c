@@ -41,6 +41,7 @@
 #include "video.h"
 #include "neo_state.h"
 #include "neo_flash_ro.h"
+#include "neo_settings.h"
 #include "ym2610/ym2610.h"
 
 extern void (**m68ki_instruction_jump_table)(void);
@@ -133,11 +134,10 @@ static void map_input(const odroid_gamepad_state_t *joy)
     if (joy->values[ODROID_INPUT_LEFT])  buttons |= 0x40;
     if (joy->values[ODROID_INPUT_RIGHT]) buttons |= 0x80;
 
-    /* START + SELECT(coin/select). VOLUME also inserts coin on G&W. */
+    /* START + SELECT(coin/select). */
     neo_set_input(buttons,
                   joy->values[ODROID_INPUT_START] ? 1 : 0,
-                  (joy->values[ODROID_INPUT_SELECT] ||
-                   joy->values[ODROID_INPUT_VOLUME]) ? 1 : 0);
+                  joy->values[ODROID_INPUT_SELECT] ? 1 : 0);
 }
 
 static void submit_audio(void)
@@ -187,7 +187,7 @@ static bool boot_game(void)
     conf.sample_rate = SAMPLE_RATE;
     conf.screen320 = 1;
     conf.system = SYS_UNIBIOS;
-    conf.country = CTY_USA;
+    conf.country = CTY_EUROPE; /* overwritten by neo_settings_apply_unibios */
     /* Retro-Go / host pace via common_emu_frame_loop — never busy-wait. */
     conf.autoframeskip = 0;
     conf.sleep_idle = 0;
@@ -225,6 +225,9 @@ static bool boot_game(void)
             return false;
         }
     }
+
+    /* UniBIOS prefs (AES/MVS + region) before the 68k boots the BIOS. */
+    neo_settings_apply_unibios();
 
     init_neo();
     if (!m68ki_instruction_jump_table) {
@@ -287,10 +290,74 @@ static void neo_fatal_quit(const char *line1, const char *line2)
     odroid_system_switch_app(0);
 }
 
+static char neo_opt_hw_str[12];
+static char neo_opt_region_str[12];
+
+static void neo_hw_to_str(neo_hw_t hw, char *buf)
+{
+    strcpy(buf, hw == NEO_HW_MVS ? "MVS" : "AES");
+}
+
+static void neo_region_to_str(neo_region_t region, char *buf)
+{
+    switch (region) {
+    case NEO_REGION_JAPAN:  strcpy(buf, "Japan");  break;
+    case NEO_REGION_USA:    strcpy(buf, "USA");    break;
+    default:                strcpy(buf, "Europe"); break;
+    }
+}
+
+static void neo_apply_and_reset(void)
+{
+    /*
+     * UniBIOS reads region/mode once into 68k RAM at power-on; a plain
+     * cpu_68k_reset keeps those values. Clear work RAM + restamp BRAM/
+     * memcard + BIOS vectors so the splash re-reads our options.
+     */
+    neo_settings_apply_unibios();
+    memset(memory.ram, 0, 0x10000);
+    neo_vector_use_bios();
+    neogeo_reset();
+}
+
+static bool update_hw_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event,
+                         uint32_t repeat)
+{
+    (void)repeat;
+    neo_hw_t hw = neo_settings_hw_get();
+
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+        hw = (hw == NEO_HW_AES) ? NEO_HW_MVS : NEO_HW_AES;
+        neo_settings_hw_set(hw);
+    }
+    neo_hw_to_str(hw, option->value);
+    if (event == ODROID_DIALOG_ENTER)
+        neo_apply_and_reset();
+    return event == ODROID_DIALOG_ENTER;
+}
+
+static bool update_region_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event,
+                             uint32_t repeat)
+{
+    (void)repeat;
+    int region = (int)neo_settings_region_get();
+
+    if (event == ODROID_DIALOG_PREV)
+        region = region > 0 ? region - 1 : 2;
+    if (event == ODROID_DIALOG_NEXT)
+        region = region < 2 ? region + 1 : 0;
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)
+        neo_settings_region_set((neo_region_t)region);
+
+    neo_region_to_str((neo_region_t)region, option->value);
+    if (event == ODROID_DIALOG_ENTER)
+        neo_apply_and_reset();
+    return event == ODROID_DIALOG_ENTER;
+}
+
 void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     odroid_gamepad_state_t joystick;
-    odroid_dialog_choice_t options[1];
 
     gw_core_bridge_init();
     neo_apply_cpu_clock();
@@ -318,7 +385,8 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot,
                            NULL, &SleepWake, &SramSave, NULL);
 
-    options[0] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+    neo_hw_to_str(neo_settings_hw_get(), neo_opt_hw_str);
+    neo_region_to_str(neo_settings_region_get(), neo_opt_region_str);
 
     /* Start SAI/DMA only after ROM/flash load. Starting earlier leaves the
      * DMA half unfilled for seconds (QSPI cache / zip inflate) and can leave
@@ -352,7 +420,14 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
         odroid_input_read_gamepad(&joystick);
-        common_emu_input_loop(&joystick, options, &neo_repaint);
+        {
+            odroid_dialog_choice_t options[] = {
+                {100, "System", neo_opt_hw_str, 1, &update_hw_cb},
+                {101, "Region", neo_opt_region_str, 1, &update_region_cb},
+                ODROID_DIALOG_CHOICE_LAST
+            };
+            common_emu_input_loop(&joystick, options, &neo_repaint);
+        }
         common_emu_input_loop_handle_turbo(&joystick);
         pad = joystick;
         map_input(&joystick);
