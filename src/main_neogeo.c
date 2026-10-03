@@ -133,7 +133,7 @@ static void map_input(const odroid_gamepad_state_t *joy)
     if (joy->values[ODROID_INPUT_LEFT])  buttons |= 0x40;
     if (joy->values[ODROID_INPUT_RIGHT]) buttons |= 0x80;
 
-    /* START + SELECT(coin). VOLUME also inserts coin on G&W. */
+    /* START + SELECT(coin/select). VOLUME also inserts coin on G&W. */
     neo_set_input(buttons,
                   joy->values[ODROID_INPUT_START] ? 1 : 0,
                   (joy->values[ODROID_INPUT_SELECT] ||

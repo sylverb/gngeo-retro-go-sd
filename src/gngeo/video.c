@@ -417,6 +417,49 @@ static __inline__ void draw_tile_arm(unsigned int tileno, int sx, int sy, int zx
 }
 #endif
 
+/*
+ * UniBIOS AES + MVS kof2003 omits the board-only "SNK forever" FIX rows.
+ * When those cells are still blank on the splash, fill them from board SFIX
+ * tile numbers (same layout as a normal UniBIOS splash). Cheap: one probe.
+ */
+static void kof2003_unibios_aes_snk_fix(void)
+{
+	unsigned title, cell;
+	int x;
+	static const Uint16 snk24[17] = {
+		0x1200, 0x1201, 0x1202, 0x1203, 0x1204, 0x1205, 0x1206, 0x1207,
+		0x1208, 0x1209, 0x2166, 0x216f, 0x2172, 0x2165, 0x2176, 0x2165, 0x2172
+	};
+	static const Uint16 snk25[17] = {
+		0x120a, 0x120b, 0x120c, 0x120d, 0x120e, 0x120f, 0x1214, 0x1215,
+		0x1216, 0x1217, 0x2266, 0x226f, 0x2272, 0x2265, 0x2276, 0x2265, 0x2272
+	};
+	static const Uint16 snk26[17] = {
+		0x1218, 0x1219, 0x121a, 0x121b, 0x121c, 0x121d, 0x121e, 0x121f,
+		0x1240, 0x125e, 0x602d, 0x602d, 0x602d, 0x602d, 0x602d, 0x602d, 0x602d
+	};
+
+	if (!conf.game || strncmp(conf.game, "kof2003", 7) != 0)
+		return;
+	if (current_fix != memory.rom.game_sfix.p || !memory.rom.bios_sfix.p)
+		return;
+
+	title = READ_WORD(&memory.vid.ram[0xE000 + ((11 + (9 << 5)) << 1)]) & 0xfff;
+	if (title != 0xd54 && title != 0x154)
+		return;
+	cell = READ_WORD(&memory.vid.ram[0xE000 + ((24 + (11 << 5)) << 1)]) & 0xfff;
+	if (cell != 0x0ff && cell != 0x000)
+		return;
+
+	for (x = 7; x <= 32; x++)
+		WRITE_WORD(&memory.vid.ram[0xE000 + ((19 + (x << 5)) << 1)], 0x5116);
+	for (x = 0; x < 17; x++) {
+		WRITE_WORD(&memory.vid.ram[0xE000 + ((24 + ((11 + x) << 5)) << 1)], snk24[x]);
+		WRITE_WORD(&memory.vid.ram[0xE000 + ((25 + ((11 + x) << 5)) << 1)], snk25[x]);
+		WRITE_WORD(&memory.vid.ram[0xE000 + ((26 + ((11 + x) << 5)) << 1)], snk26[x]);
+	}
+}
+
 static __inline__ void draw_fix_char(unsigned char *buf, int start, int end) {
 	unsigned int *gfxdata, myword;
 	int x, y, yy;
@@ -427,6 +470,8 @@ static __inline__ void draw_fix_char(unsigned char *buf, int start, int end) {
 	int banked, garouoffsets[32];
 	SDL_Rect clip;
 	int ystart = 1, yend = 32;
+
+	kof2003_unibios_aes_snk_fix();
 
 	/*
 	 * Match MAME: banking only when cart FIX > 128 KiB (addr_mask > 0x1ffff).
@@ -478,11 +523,28 @@ static __inline__ void draw_fix_char(unsigned char *buf, int start, int end) {
 	 * started at 1 because column 0 sat in the 16px gutter. */
 	for (y = ystart; y < yend; y++)
 		for (x = 0; x < xmax; x++) {
+			Uint8 *tile_fix = current_fix;
+			Uint8 *tile_usage = fix_usage;
+			int tile_banked = banked;
+
 			byte1 = (READ_WORD(&memory.vid.ram[0xE000 + ((y + (x << 5)) << 1)]));
 			byte2 = byte1 >> 12;
 			byte1 = byte1 & 0xfff;
 
-			if (banked) {
+			/*
+			 * Board-SFIX glyphs we inject for kof2003 AES splash (SNK logo /
+			 * underlines) must not go through cart banking.
+			 */
+			if (tile_banked && memory.rom.bios_sfix.p && memory.fix_board_usage &&
+			    (byte1 == 0x116 || byte1 == 0x117 ||
+			     (byte1 >= 0x200 && byte1 < 0x280) ||
+			     (byte1 == 0x02d && byte2 == 6))) {
+				tile_fix = memory.rom.bios_sfix.p;
+				tile_usage = memory.fix_board_usage;
+				tile_banked = 0;
+			}
+
+			if (tile_banked) {
 				switch (neogeo_fix_bank_type) {
 					case 1:
 						/* Garou, MSlug 3 */
@@ -495,12 +557,13 @@ static __inline__ void draw_fix_char(unsigned char *buf, int start, int end) {
 			}
 
 			{
-				Uint32 fix_rom_size = (current_fix == memory.rom.bios_sfix.p)
+				Uint32 fix_rom_size = (tile_fix == memory.rom.bios_sfix.p)
 					? memory.rom.bios_sfix.size
 					: memory.rom.game_sfix.size;
 				if (fix_rom_size == 0)
 					fix_rom_size = memory.rom.bios_sfix.size;
-				if ((byte1 >= (fix_rom_size >> 5)) || (fix_usage[byte1] == 0x00))
+				if ((byte1 >= (fix_rom_size >> 5)) ||
+				    !tile_usage || tile_usage[byte1] == 0x00)
 					continue;
 			}
 
@@ -511,7 +574,7 @@ static __inline__ void draw_fix_char(unsigned char *buf, int start, int end) {
 			draw_one_char_i386(byte1, byte2, br);
 #else
 			paldata = (unsigned int *) &current_pc_pal[16 * byte2];
-			gfxdata = (unsigned int *) &current_fix[ byte1 << 5];
+			gfxdata = (unsigned int *) &tile_fix[ byte1 << 5];
 
 			for (yy = 0; yy < 8; yy++) {
 				myword = gfxdata[yy];

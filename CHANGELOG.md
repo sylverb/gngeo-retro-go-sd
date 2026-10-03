@@ -32,6 +32,9 @@ Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
   SAI (stop/init/clear/start) after load and on every SleepWake.
 - Cache 512 KiB cart S1 (`kof2000` / `kof2003`): stream convert tile-by-tile
   into QSPI instead of staging the whole SFIX in RAM_EMU (`OOM staging sfix`).
+- UniBIOS defaults to CONSOLE: present AES on `REG_STATUS_A`/`STATUS_B` (FBNeo
+  `0x3F & ~0x18`) and treat `REG_BRDFIX` as a no-op when a cart S ROM exists.
+  `kof2003` AES splash omits “SNK forever” — restore those board SFIX rows.
 
 ### Install
 
