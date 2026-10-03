@@ -34,6 +34,7 @@ MAKE_VARS = (
     "PACKED_BIN",
     "RO_BIN",
     "CORE_NAME",
+    "ROM_DIRNAME",
     "DOCKER_IMAGE",
     "TARGET_ELF",
     "TARGET_MAP",
@@ -122,7 +123,7 @@ def build_release_notes(
     project_kind: str,
     packed_name: str,
     sd_dir: str,
-    core_name: str,
+    rom_dirname: str,
     docker_image: str,
     archive_name: str,
     debug_archive_name: str,
@@ -165,7 +166,7 @@ def build_release_notes(
         ]
     )
     if project_kind == "core":
-        lines.append(f"- Test ROMs: `/roms/{core_name}/`")
+        lines.append(f"- Test ROMs: `/roms/{rom_dirname}/`")
     else:
         stem = Path(packed_name).stem
         lines.append(f"- Optional cover: `/covers/homebrew/{stem}.img`")
@@ -200,7 +201,7 @@ def stage_release(
     project_kind = cfg["PROJECT_KIND"]
     packed_name = cfg["PACKED_BIN"]
     ro_name = (cfg.get("RO_BIN") or "").strip()
-    core_name = cfg["CORE_NAME"]
+    rom_dirname = (cfg.get("ROM_DIRNAME") or "").strip() or cfg["CORE_NAME"]
     resolved_docker = docker_image or cfg.get("DOCKER_IMAGE") or "sylverb/retro-go-sd-builder:v1.5"
 
     if not bin_path.is_file():
@@ -273,7 +274,7 @@ def stage_release(
             project_kind=project_kind,
             packed_name=packed_name,
             sd_dir=sd_dir,
-            core_name=core_name,
+            rom_dirname=rom_dirname,
             docker_image=resolved_docker,
             archive_name=archive_name,
             debug_archive_name=debug_archive_name,

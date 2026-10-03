@@ -818,7 +818,7 @@ static uint32_t flash_align_erase(uint32_t n)
 
 /* Max bytes a Neo Geo cart may occupy in the QSPI cache:
  *   flash_cache_usable_size()  — chip size minus OFW/layout reserve (64/63/60 MiB)
- *   minus erase-aligned BIOS + neogeo.ro
+ *   minus erase-aligned BIOS + gngeo.ro
  * Returns 0 if the ABI is missing (old firmware) — caller should not refuse. */
 static uint32_t neo_flash_max_game_bytes(void)
 {

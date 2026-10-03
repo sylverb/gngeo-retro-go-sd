@@ -5,7 +5,7 @@
  * Musashi handlers stay in RAM_EMU.
  *
  * Cold code/rodata (init, savestate, gno/ZIP loader, crypt, large tables)
- * is linked at sentinel VMA 0xCAFE0000 and shipped as /cores/neogeo.ro. At
+ * is linked at sentinel VMA 0xCAFE0000 and shipped as /cores/gngeo.ro. At
  * boot, main_neogeo maps that file into the QSPI cache and rebases every
  * absolute 0xCAFE… pointer in RAM_EMU (same idea as zelda3.ro). ITCM must
  * never call into the flash blob.
@@ -21,7 +21,7 @@ MEMORY
 {
   RAM_EMU    (xrw) : ORIGIN = __RAM_EMU_START__, LENGTH = __RAM_EMU_LENGTH__
   ITCM       (xrw) : ORIGIN = __ITCM_CORE_START__, LENGTH = __ITCM_CORE_LENGTH__
-  /* Sentinel VMA only — payload extracted to neogeo.ro, not packed in CORE. */
+  /* Sentinel VMA only — payload extracted to gngeo.ro, not packed in CORE. */
   FLASH_COLD (rx)  : ORIGIN = 0xCAFE0000,         LENGTH = 0xFFFFFFFF
 }
 
@@ -130,7 +130,7 @@ SECTIONS
   ASSERT(__CORE_ITCM_BSS_END__ <= __ITCM_CORE_START__ + __ITCM_CORE_LENGTH__,
          "Error: Neo Geo core ITCM segment overflows the 64K ITCM region")
 
-  /* Cold code + rodata → /cores/neogeo.ro (QSPI XIP after cache + patch). */
+  /* Cold code + rodata → /cores/gngeo.ro (QSPI XIP after cache + patch). */
   .neo_flash :
   {
     . = ALIGN(4);

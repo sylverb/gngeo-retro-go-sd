@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       project_kind: ${{ steps.meta.outputs.project_kind }}
+      core_name: ${{ steps.meta.outputs.core_name }}
       packed_bin: ${{ steps.meta.outputs.packed_bin }}
       ro_bin: ${{ steps.meta.outputs.ro_bin }}
       target_elf: ${{ steps.meta.outputs.target_elf }}
@@ -37,21 +38,25 @@ jobs:
           # Full history + tags so `git describe --tags --dirty` works for CORE_VERSION.
           fetch-depth: 0
 
+      # Artifacts: gngeo.bin / gngeo.ro (CORE_NAME); ROMs stay /roms/neogeo (ROM_DIRNAME).
       - name: Read project metadata
         id: meta
         run: |
           set -euo pipefail
           PROJECT_KIND="$(make --no-print-directory -f Makefile print-PROJECT_KIND)"
+          CORE_NAME="$(make --no-print-directory -f Makefile print-CORE_NAME)"
           PACKED_BIN="$(make --no-print-directory -f Makefile print-PACKED_BIN)"
           RO_BIN="$(make --no-print-directory -f Makefile print-RO_BIN)"
           TARGET_ELF="$(make --no-print-directory -f Makefile print-TARGET_ELF)"
           TARGET_MAP="$(make --no-print-directory -f Makefile print-TARGET_MAP)"
           echo "project_kind=${PROJECT_KIND}" >> "${GITHUB_OUTPUT}"
+          echo "core_name=${CORE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "packed_bin=${PACKED_BIN}" >> "${GITHUB_OUTPUT}"
           echo "ro_bin=${RO_BIN}" >> "${GITHUB_OUTPUT}"
           echo "target_elf=${TARGET_ELF}" >> "${GITHUB_OUTPUT}"
           echo "target_map=${TARGET_MAP}" >> "${GITHUB_OUTPUT}"
           echo "PROJECT_KIND=${PROJECT_KIND}"
+          echo "CORE_NAME=${CORE_NAME}"
           echo "PACKED_BIN=${PACKED_BIN}"
           echo "RO_BIN=${RO_BIN}"
           echo "TARGET_ELF=${TARGET_ELF}"
@@ -68,7 +73,8 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
+          # e.g. gngeo-build-artifacts → gngeo.bin + gngeo.ro + ELF/map
+          name: ${{ steps.meta.outputs.core_name }}-build-artifacts
           path: |
             ${{ steps.meta.outputs.packed_bin }}
             ${{ steps.meta.outputs.ro_bin }}
@@ -94,7 +100,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: build-artifacts
+          name: ${{ needs.build.outputs.core_name }}-build-artifacts
           path: dist
 
       - name: Stage release assets

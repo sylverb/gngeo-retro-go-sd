@@ -879,7 +879,7 @@ int gno_flash_load(const char *path)
 
 #ifndef HOST_BUILD
     /* Refuse oversized XIP dumps before the long "Caching game…" pass.
-     * Same budget as ZIP: usable cache − BIOS − neogeo.ro. */
+     * Same budget as ZIP: usable cache − BIOS − gngeo.ro. */
     {
         FILE *fz = fopen(path, "rb");
         uint32_t usable = flash_cache_usable_size();

@@ -367,8 +367,8 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     /* Map cold .text/.rodata into QSPI and rebase CAFE pointers in RAM_EMU
      * before any call into neo_state / gno_flash / neocrypt / … */
     if (!neo_load_flash_cold()) {
-        boot_fail_reason = "missing neogeo.ro";
-        neo_fatal_quit("Neo Geo: missing neogeo.ro", "Copy /cores/neogeo.ro");
+        boot_fail_reason = "missing gngeo.ro";
+        neo_fatal_quit("Neo Geo: missing gngeo.ro", "Copy /cores/gngeo.ro");
     }
 #endif
 

@@ -23692,7 +23692,7 @@ typedef struct
 void (**m68ki_instruction_jump_table)(void);
 
 /* Opcode handler table — cold: only walked once at m68k_init to fill the JT.
- * Lives in the neogeo.ro flash sidecar (see ld/neogeo_core.ld .neo_flash). */
+ * Lives in the gngeo.ro flash sidecar (see ld/neogeo_core.ld .neo_flash). */
 #ifndef HOST_BUILD
 #define NEO_FLASH_RODATA __attribute__((section(".neo_flash"), aligned(4)))
 #else

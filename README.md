@@ -5,8 +5,8 @@ GPL-licensed Neo Geo AES/MVS emulator core for
 
 | | |
 |--|--|
-| Packed binary | `neogeo.bin` → `/cores/neogeo.bin` |
-| Cold sidecar | `neogeo.ro` → `/cores/neogeo.ro` (required — init/savestate/tables) |
+| Packed binary | `gngeo.bin` → `/cores/gngeo.bin` |
+| Cold sidecar | `gngeo.ro` → `/cores/gngeo.ro` (required — init/savestate/tables) |
 | ROMs | `/roms/neogeo/*.gno` (XIP tiles — see below) |
 | BIOS | `/bios/neogeo/` (shared, not inside each `.gno`) |
 | Entry | `app_main_neogeo` |
@@ -19,12 +19,12 @@ Based on [GnGeo](https://github.com/pepone42/gngeo) with a Musashi/gwenesis
 ## Build
 
 ```bash
-make            # → neogeo.bin + neogeo.ro (device)
+make            # → gngeo.bin + gngeo.ro (device)
 make docker
-make host       # → neogeo_host (desktop SDL2)
+make host       # → gngeo_host (desktop SDL2)
 ```
 
-Copy **both** `neogeo.bin` and `neogeo.ro` to `/cores/` on the SD. The `.ro`
+Copy **both** `gngeo.bin` and `gngeo.ro` to `/cores/` on the SD. The `.ro`
 sidecar holds cold `.text`/`.rodata` (linked at `0xCAFE…`, mapped into QSPI
 and rebased at boot — same pattern as Zelda 3’s `zelda3.ro`).
 
@@ -52,11 +52,11 @@ Default is AES + Europe (UniBIOS CONSOLE).
 python3 tools/make_gno_xip.py maglord.gno -o host_roms/maglord.gno
 
 make host
-./neogeo_host --bios uni-bios-40 host_roms/maglord.gno
-# or: NEOGEO_BIOS=uni-bios-40 ./neogeo_host host_roms/maglord.gno
+./gngeo_host --bios uni-bios-40 host_roms/maglord.gno
+# or: NEOGEO_BIOS=uni-bios-40 ./gngeo_host host_roms/maglord.gno
 ```
 
-Unencrypted MAME `.zip` sets also work (`./neogeo_host blazstar.zip`).
+Unencrypted MAME `.zip` sets also work (`./gngeo_host blazstar.zip`).
 
 ### Encrypted sets (CMC42/50, SMA, PVC, PCM2)
 
@@ -68,7 +68,7 @@ make decrypt-zip    # → tools/decrypt_neogeo_zip (+ cmc42/cmc50.xor)
 ./tools/decrypt_neogeo_zip --list
 ./tools/decrypt_neogeo_zip mslug5.zip -o mslug5_dec.zip
 ./tools/decrypt_neogeo_zip kof2002.zip -o kof2002_dec.zip
-./neogeo_host mslug5_dec.zip
+./gngeo_host mslug5_dec.zip
 # SD: /roms/neogeo/<game>_dec.zip
 ```
 
@@ -94,8 +94,8 @@ python3 tools/make_gno_xip.py maglord.gno -o maglord.gno
 ```
 
 ```text
-/cores/neogeo.bin
-/cores/neogeo.ro
+/cores/gngeo.bin
+/cores/gngeo.ro
 /roms/neogeo/maglord.gno
 /bios/neogeo/uni-bios.rom
 /bios/neogeo/sfix.sfix
@@ -107,7 +107,7 @@ Controls: D-pad, A/B/X/Y = A/B/C/D, Start = start, Select = coin.
 ## Layout
 
 ```text
-Makefile                 CORE_NAME=neogeo pack metadata
+Makefile                 CORE_NAME=gngeo pack metadata
 src/main_neogeo.c        Retro-Go frame loop
 src/porting/             SDL stubs, gno XIP loader, Musashi glue
 src/gngeo/               Vendored GnGeo + m68k + mamez80 + ym2610

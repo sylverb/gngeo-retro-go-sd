@@ -1,12 +1,12 @@
 # Neo Geo (GnGeo) core for Retro-Go SD.
 #
-#   make / make docker  → neogeo.bin
+#   make / make docker  → gngeo.bin + gngeo.ro
 # ROMs: /roms/neogeo/*.zip (MAME / decrypted) or *.gno (XIP — see tools/)
 # Encrypted sets: make decrypt-zip && ./tools/decrypt_neogeo_zip mslug5.zip -o mslug5_dec.zip
 
 PROJECT_KIND ?= core
 
-CORE_NAME  := neogeo
+CORE_NAME  := gngeo
 CORE_ENTRY := app_main_neogeo
 ROM_DIRNAME := neogeo
 
@@ -75,10 +75,10 @@ CORE_C_DEFS := \
 #   make CORE_C_DEFS+=-DNEO_YM_EARLYOUT=0      → stock YM loop (no early-outs)
 #   make CORE_C_DEFS+=-DNEO_DISABLE_VIDEO=1    → no draw/present (audio A/B)
 # Host BIOS scout / frame profiler:
-#   ./neogeo_host --bios-trace rom.gno
-#   ./neogeo_host --prof rom.gno
-#   NEO_BIOS_TRACE_EVERY=120 NEO_BIOS_TRACE_VERBOSE=1 ./neogeo_host --bios-trace rom.gno
-#   NEO_PROF_EVERY=120 ./neogeo_host --prof rom.gno
+#   ./gngeo_host --bios-trace rom.gno
+#   ./gngeo_host --prof rom.gno
+#   NEO_BIOS_TRACE_EVERY=120 NEO_BIOS_TRACE_VERBOSE=1 ./gngeo_host --bios-trace rom.gno
+#   NEO_PROF_EVERY=120 ./gngeo_host --prof rom.gno
 # Next perf leads (if still short): stub draw_tile_50/25; Z80 66667
 #CORE_C_DEFS += -DNEO_DISABLE_YM2610=1
 #CORE_C_DEFS += -DNEO_DISABLE_VIDEO=1
@@ -128,8 +128,8 @@ pack: $(TARGET_BIN) $(RO_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 
 all: pack
 
-.PHONY: print-PROJECT_KIND print-PACKED_BIN print-RO_BIN print-CORE_NAME print-DOCKER_IMAGE \
-	print-TARGET_ELF print-TARGET_MAP print-CORE_VERSION
+.PHONY: print-PROJECT_KIND print-PACKED_BIN print-RO_BIN print-CORE_NAME print-ROM_DIRNAME \
+	print-DOCKER_IMAGE print-TARGET_ELF print-TARGET_MAP print-CORE_VERSION
 print-PROJECT_KIND:
 	@echo $(PROJECT_KIND)
 print-PACKED_BIN:
@@ -138,6 +138,8 @@ print-RO_BIN:
 	@echo $(RO_BIN)
 print-CORE_NAME:
 	@echo $(CORE_NAME)
+print-ROM_DIRNAME:
+	@echo $(ROM_DIRNAME)
 print-DOCKER_IMAGE:
 	@echo $(DOCKER_IMAGE)
 print-TARGET_ELF:

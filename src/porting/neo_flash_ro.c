@@ -1,5 +1,5 @@
 /*
- * Load /cores/neogeo.ro into the QSPI flash cache and rebase 0xCAFE…
+ * Load /cores/gngeo.ro into the QSPI flash cache and rebase 0xCAFE…
  * absolute addresses in RAM_EMU (Zelda3-style sidecar).
  *
  * Kept in its own TU so main_neogeo.o is included in the rewrite walk —

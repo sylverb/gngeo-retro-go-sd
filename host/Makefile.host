@@ -2,7 +2,7 @@
 #
 #   make host                     # SDL2
 #   make host HOST_SDL=3          # SDL3
-#   ./neogeo_host maglord.gno     # needs NEOGEO_BIOS=neogeo.zip (or bios dir)
+#   ./gngeo_host maglord.gno      # needs NEOGEO_BIOS=neogeo.zip (or bios dir)
 #
 # Requires: pkg-config + libsdl2-dev / sdl2, zlib.
 

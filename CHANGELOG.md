@@ -2,8 +2,6 @@
 
 ## [v0.0.4]
 
-Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
-
 ### Added
 
 - Pause-menu options **System** (AES / MVS) and **Region** (Japan / USA /
@@ -14,6 +12,8 @@ Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
 
 ### Changed
 
+- Core artifacts renamed `neogeo.*` → `gngeo.bin` / `gngeo.ro` / `gngeo_host`
+  (SD: `/cores/gngeo.bin` + `/cores/gngeo.ro`). ROM/BIOS dirs stay `/roms|bios/neogeo/`.
 - Default UniBIOS boot remains AES + Europe (CONSOLE); MVS is opt-in.
 
 ### Fixed
@@ -44,8 +44,8 @@ Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
 
 Release assets (attached to this GitHub release):
 
-- `neogeo-vx.x.x.zip` — SD install archive. Unzip onto the **root** of the SD
-  card (creates `/cores/neogeo.bin` and `/cores/neogeo.ro`).
+- `gngeo-vx.x.x.zip` — SD install archive. Unzip onto the **root** of the SD
+  card (creates `/cores/gngeo.bin` and `/cores/gngeo.ro`).
 
 Also required on the SD card (not in the zip):
 
