@@ -784,6 +784,14 @@ void odroid_system_init(int app_id, int sampleRate)
     odroid_audio_init(sampleRate);
 }
 
+/* Device: return to launcher. Host: quit the process. */
+void odroid_system_switch_app(int app)
+{
+    (void)app;
+    host_platform_shutdown();
+    exit(0);
+}
+
 void odroid_system_emu_init(state_handler_t load_cb, state_handler_t save_cb,
                             screenshot_handler_t screenshot_cb,
                             shutdown_handler_t shutdown_cb,

@@ -492,7 +492,11 @@ static int device_map_sfix_converted(const char *path, Uint8 **out, uint32_t *ou
             uint8_t pct = (uint8_t)((done * 100u) / n);
             if (pct > 99)
                 pct = 99;
-            odroid_overlay_draw_progress_bar("sfix", pct);
+            if (!odroid_overlay_draw_progress_bar_cancellable("sfix", pct)) {
+                store_data_abort(&st);
+                fclose(f);
+                return GN_FALSE;
+            }
         }
         wdog_refresh();
     }
@@ -507,7 +511,7 @@ static int device_map_sfix_converted(const char *path, Uint8 **out, uint32_t *ou
     *out = (Uint8 *)(uintptr_t)hit;
     *out_size = n;
     printf("gno: sfix converted → flash (%s)\n", path);
-    odroid_overlay_draw_progress_bar("sfix", 100);
+    (void)odroid_overlay_draw_progress_bar_cancellable("sfix", 100);
     return GN_TRUE;
 }
 

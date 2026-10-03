@@ -3,7 +3,6 @@
 ## [v0.0.4]
 
 Still WIP: occasional sound popping (set volume to 0 to mute emu audio).
-If sound does not start, restart the game.
 
 ### Added
 
@@ -28,6 +27,11 @@ If sound does not start, restart the game.
 - mslug5 softlock: 68k master cycle counter could wrap after a long frame-wait
   busy-loop; `m68k_run` then no-op'd forever (watchdog reset did not clear
   cycles). Rebase cycles before overflow and on CPU reset.
+- Intermittent silent boot: defer `audio_start_playing` until after ROM/flash
+  load so SAI/DMA is not left unfed during a long `boot_game()`. Hard-restart
+  SAI (stop/init/clear/start) after load and on every SleepWake.
+- Cache 512 KiB cart S1 (`kof2000` / `kof2003`): stream convert tile-by-tile
+  into QSPI instead of staging the whole SFIX in RAM_EMU (`OOM staging sfix`).
 
 ### Install
 

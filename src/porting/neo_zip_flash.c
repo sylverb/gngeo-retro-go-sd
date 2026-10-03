@@ -28,7 +28,8 @@
 #include "gw_lcd.h"
 #else
 #include "gw_flash_alloc.h"
-void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress);
+bool odroid_overlay_draw_progress_bar_cancellable(const char *header, uint8_t progress);
+bool odroid_overlay_progress_poll_cancel(void);
 void wdog_refresh(void);
 #endif
 
@@ -568,7 +569,7 @@ static uint32_t s_page_used;
  * not flash coalesce chunks. Counting only flash made the bar race to 99%
  * on P/M/V then freeze for the whole CROM inflate/convert. */
 
-static void prog_paint(uint8_t pct, int wait_swap)
+static int prog_paint(uint8_t pct, int wait_swap)
 {
 #ifndef HOST_BUILD
     if (wait_swap)
@@ -576,17 +577,21 @@ static void prog_paint(uint8_t pct, int wait_swap)
     else if (lcd_is_swap_pending()) {
         /* Leave last_pct stale so the next bump retries. */
         wdog_refresh();
-        return;
+        return 1;
     }
 #endif
-    odroid_overlay_draw_progress_bar(
-        s_prog_hdr[0] ? s_prog_hdr : "Neo Geo", pct);
+    if (!odroid_overlay_draw_progress_bar_cancellable(
+            s_prog_hdr[0] ? s_prog_hdr : "Neo Geo", pct)) {
+        zip_set_err("Cancelled");
+        return 0;
+    }
 #ifndef HOST_BUILD
     lcd_swap();
 #endif
     s_prog_last_pct = pct;
     s_prog_since_paint = 0;
     wdog_refresh();
+    return 1;
 }
 
 static uint8_t prog_pct(void)
@@ -598,19 +603,19 @@ static uint8_t prog_pct(void)
     return (uint8_t)((uint64_t)s_prog_done * 99u / (uint64_t)s_prog_total);
 }
 
-static void prog_redraw(int force)
+static int prog_redraw(int force)
 {
     uint8_t pct = prog_pct();
 
     if (!force && pct == s_prog_last_pct) {
         wdog_refresh();
-        return;
+        return 1;
     }
-    prog_paint(pct, force);
+    return prog_paint(pct, force);
 }
 
 /* Title: "3/14 239-c1.c1" (fits the overlay header ~30 chars). */
-static void prog_set_file(const char *name)
+static int prog_set_file(const char *name)
 {
     const char *base = name ? strrchr(name, '/') : NULL;
     char shortn[24];
@@ -629,26 +634,34 @@ static void prog_set_file(const char *name)
     else
         snprintf(s_prog_hdr, sizeof(s_prog_hdr), "%s", shortn);
     s_prog_last_pct = 0xff;
-    prog_redraw(1);
+    return prog_redraw(1);
 }
 
-static void prog_next_file(const char *name)
+static int prog_next_file(const char *name)
 {
     if (s_prog_step < 255)
         s_prog_step++;
-    prog_set_file(name);
+    return prog_set_file(name);
 }
 
-static void prog_bump(uint32_t n)
+static int prog_bump(uint32_t n)
 {
     if (!n)
-        return;
+        return 1;
     s_prog_done += n;
     if (s_prog_done > s_prog_total && s_prog_total)
         s_prog_done = s_prog_total;
     s_prog_since_paint += n;
+    /* Poll cancel even when we skip a repaint — a short B tap must not be
+     * missed between 64 KiB paint intervals. */
+#ifndef HOST_BUILD
+    if (odroid_overlay_progress_poll_cancel()) {
+        zip_set_err("Cancelled");
+        return 0;
+    }
+#endif
     /* Repaint on % change, or every 64 KiB so long CROM inflates move. */
-    prog_redraw(s_prog_since_paint >= (64u * 1024u));
+    return prog_redraw(s_prog_since_paint >= (64u * 1024u));
 }
 
 static void prog_finish(void)
@@ -656,7 +669,7 @@ static void prog_finish(void)
     if (s_prog_total)
         s_prog_done = s_prog_total;
     s_prog_last_pct = 0xff;
-    prog_paint(100, 1);
+    (void)prog_paint(100, 1);
 }
 
 static int key_hit(const char *stem, const char *suf, uint32_t expect)
@@ -854,24 +867,6 @@ static void stream_abort(flash_stream_t *st)
     store_data_abort(st);
 }
 
-static int zip_read_fully(neo_zip_file_t *f, void *dst, uint32_t expect)
-{
-    uint8_t *p = (uint8_t *)dst;
-    uint32_t got = 0;
-    while (got < expect) {
-        int n = (int)(expect - got);
-        int r;
-        if (n > 4096)
-            n = 4096;
-        r = neo_zip_fread(f, p + got, n);
-        if (r <= 0)
-            return 0;
-        got += (uint32_t)r;
-        prog_bump((uint32_t)r);
-    }
-    return 1;
-}
-
 static neo_zip_file_t *zip_open_member(neo_zip_t *z, const char *name, uint32_t crc)
 {
     neo_zip_file_t *f = neo_zip_fopen(z, name, crc);
@@ -891,7 +886,9 @@ static int stream_members_raw(neo_zip_t *z, const ROM_DEF *drv, uint8_t region,
         uint32_t left;
         if (drv->rom[i].region != region)
             continue;
-        prog_next_file(drv->rom[i].filename);
+        if (!prog_next_file(drv->rom[i].filename)) {
+            return 0;
+        }
         f = zip_open_member(z, drv->rom[i].filename, drv->rom[i].crc);
         if (!f) {
             zip_set_err("zip member missing");
@@ -924,7 +921,10 @@ static int stream_members_raw(neo_zip_t *z, const ROM_DEF *drv, uint8_t region,
                 zip_set_err("flash append failed");
                 return 0;
             }
-            prog_bump((uint32_t)r);
+            if (!prog_bump((uint32_t)r)) {
+                neo_zip_fclose(f);
+                return 0;
+            }
             left -= (uint32_t)r;
         }
         neo_zip_fclose(f);
@@ -977,7 +977,6 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     uint32_t gfix_sz = sfix_sz >> 5;
     uint32_t got_s = 0, got_g = 0;
     const uint8_t *hit_s, *hit_g;
-    uint8_t *sfix_buf;
     uint8_t *gfix_usage;
     flash_stream_t st;
     neo_zip_file_t *fs = NULL;
@@ -1009,40 +1008,71 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
         return 0;
     }
 
-    prog_next_file(sname);
+    if (!prog_next_file(sname))
+        return 0;
 
-    sfix_buf = (uint8_t *)ram_malloc(sfix_sz);
+    /* Convert is 32 B/tile — stream zip→flash so 512 KiB S1 (kof2000/2003)
+     * never needs a full RAM staging buffer on top of inflate scratch. */
     gfix_usage = (uint8_t *)ram_calloc(1, gfix_sz);
-    if (!sfix_buf || !gfix_usage) {
-        zip_set_err("OOM staging sfix");
+    if (!gfix_usage) {
+        zip_set_err("OOM staging gfix");
         return 0;
     }
 
     fs = zip_open_member(z, sname, scrc);
-    if (!fs || !zip_read_fully(fs, sfix_buf, sfix_sz)) {
-        if (fs)
-            neo_zip_fclose(fs);
-        zip_set_err(fs ? "sfix read failed" : "sfix open failed");
+    if (!fs) {
+        zip_set_err("sfix open failed");
         return 0;
     }
-    neo_zip_fclose(fs);
-    /* Convert is quick vs flash; attribute progress to the store below. */
-    convert_sfix_inplace(sfix_buf, (int)sfix_sz, gfix_usage);
-
     memset(&st, 0, sizeof(st));
-    if (!stream_begin(&st, key_s, sfix_sz) ||
-        !append_bytes(&st, sfix_buf, sfix_sz)) {
+    if (!stream_begin(&st, key_s, sfix_sz)) {
+        neo_zip_fclose(fs);
         stream_abort(&st);
         zip_set_err("ROM too large for flash");
         return 0;
     }
+    {
+        uint32_t left = sfix_sz;
+        uint32_t gi = 0;
+        uint8_t tile[32];
+
+        while (left) {
+            uint32_t chunk = left > sizeof(tile) ? (uint32_t)sizeof(tile) : left;
+            int r = neo_zip_fread(fs, tile, (int)chunk);
+            if (r != (int)chunk) {
+                neo_zip_fclose(fs);
+                stream_abort(&st);
+                zip_set_err("sfix read failed");
+                return 0;
+            }
+            if (!prog_bump(chunk)) {
+                neo_zip_fclose(fs);
+                stream_abort(&st);
+                return 0;
+            }
+            if (chunk == 32) {
+                convert_sfix_inplace(tile, 32,
+                                      gfix_usage ? gfix_usage + gi : NULL);
+                gi++;
+            }
+            if (!append_bytes(&st, tile, chunk)) {
+                neo_zip_fclose(fs);
+                stream_abort(&st);
+                zip_set_err("ROM too large for flash");
+                return 0;
+            }
+            left -= chunk;
+        }
+    }
+    neo_zip_fclose(fs);
     hit_s = stream_finish(&st);
     if (!hit_s) {
         zip_set_err("sfix finish failed");
         return 0;
     }
 
-    prog_next_file("gfix");
+    if (!prog_next_file("gfix"))
+        return 0;
     memset(&st, 0, sizeof(st));
     if (!stream_begin(&st, key_g, gfix_sz) ||
         !append_bytes(&st, gfix_usage, gfix_sz)) {
@@ -1055,7 +1085,8 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
         zip_set_err("gfix finish failed");
         return 0;
     }
-    prog_bump(gfix_sz);
+    if (!prog_bump(gfix_sz))
+        return 0;
     printf("neo_zip: cached %s + %s\n", key_s, key_g);
     *s_out = hit_s;
     *s_sz = sfix_sz;
@@ -1085,7 +1116,11 @@ static int stream_crom_pair(neo_zip_t *z, const char *even_name, uint32_t even_c
     }
 
     /* Show even name first; switch to odd halfway so both filenames appear. */
-    prog_next_file(even_name);
+    if (!prog_next_file(even_name)) {
+        neo_zip_fclose(fe);
+        neo_zip_fclose(fo);
+        return 0;
+    }
     odd_title_at = file_size / 2u;
 
     while (left) {
@@ -1104,8 +1139,13 @@ static int stream_crom_pair(neo_zip_t *z, const char *even_name, uint32_t even_c
         }
 
         if (done_before < odd_title_at &&
-            done_before + chunk >= odd_title_at)
-            prog_next_file(odd_name);
+            done_before + chunk >= odd_title_at) {
+            if (!prog_next_file(odd_name)) {
+                neo_zip_fclose(fe);
+                neo_zip_fclose(fo);
+                return 0;
+            }
+        }
 
         for (i = 0; i < (int)chunk; i++) {
             tile[i * 2] = even[i];
@@ -1124,7 +1164,11 @@ static int stream_crom_pair(neo_zip_t *z, const char *even_name, uint32_t even_c
             return 0;
         }
         /* After convert+flash so the bar tracks real CROM work, not just inflate. */
-        prog_bump((uint32_t)chunk * 2u);
+        if (!prog_bump((uint32_t)chunk * 2u)) {
+            neo_zip_fclose(fe);
+            neo_zip_fclose(fo);
+            return 0;
+        }
         tileno++;
         left -= chunk;
     }
@@ -1255,7 +1299,8 @@ static int ensure_tiles(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
         return 0;
     }
 
-    prog_next_file("spr");
+    if (!prog_next_file("spr"))
+        return 0;
     memset(&st, 0, sizeof(st));
     if (!stream_begin(&st, key_spr, spr_usage_sz) ||
         !append_bytes(&st, spr_usage, spr_usage_sz)) {
@@ -1268,7 +1313,8 @@ static int ensure_tiles(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
         zip_set_err("spr finish failed");
         return 0;
     }
-    prog_bump(spr_usage_sz);
+    if (!prog_bump(spr_usage_sz))
+        return 0;
     printf("neo_zip: cached %s + %s\n", key_c, key_spr);
     *c_out = hit_c;
     *c_sz = tiles;
@@ -1356,7 +1402,14 @@ int neo_zip_flash_load(const char *zip_path)
                (unsigned)s_prog_steps);
 #endif
         snprintf(s_prog_hdr, sizeof(s_prog_hdr), "Neo Geo");
-        prog_paint(prog_pct(), 1);
+        /* progress==0 clears the B-cancel latch from a previous attempt. */
+        (void)odroid_overlay_draw_progress_bar_cancellable(s_prog_hdr, 0);
+        if (!prog_paint(prog_pct(), 1)) {
+            neo_zip_close(z);
+            neo_zip_set_scratch(NULL, 0);
+            ram_init();
+            return 0;
+        }
     } else
         printf("neo_zip: all regions already cached\n");
 
@@ -1377,8 +1430,7 @@ int neo_zip_flash_load(const char *zip_path)
         return 0;
     }
 
-    /* sfix/gfix staging (~132 KiB) must be dropped before spr_usage
-     * (64 KiB): together with inflate scratch they exceed residual RAM_EMU. */
+    /* Drop gfix staging (+ inflate scratch) before spr_usage (~64 KiB). */
     if (!refresh_zip_scratch(scratch_need)) {
         neo_zip_close(z);
         ram_init();

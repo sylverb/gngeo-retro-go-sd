@@ -67,15 +67,26 @@ int odroid_overlay_confirm(const char *text, bool yes_selected, void_callback_t 
 void odroid_overlay_alert(const char *text);
 
 uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap);
-/* Transform each SD→flash chunk in RAM before program (see gw_flash_alloc.h). */
-uint8_t *odroid_overlay_cache_file_in_flash_relocate(
-    const char *file_path, uint32_t *file_size_p, bool byte_swap,
-    void (*relocate_cb)(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
-                        uint8_t *file_address, uint32_t file_size));
+
+/* Like cache_file_in_flash, but B cancels (returns NULL and hot-boots the
+ * launcher). Prefer this for long ROM caches; leave the original for cores
+ * that must not be interrupted. */
+uint8_t *odroid_overlay_cache_file_in_flash_cancellable(const char *file_path, uint32_t *file_size_p,
+                                                        bool byte_swap);
 
 /* Caching progress chrome, also published through the firmware ABI so a
  * core that caches its own game data can draw the same bar. */
 void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress);
+
+/* Progress bar with "B: Cancel" footer. Returns false once B has been
+ * pressed (latched until progress returns to 0). Pair with
+ * odroid_overlay_progress_poll_cancel() between paints. */
+bool odroid_overlay_draw_progress_bar_cancellable(const char *header, uint8_t progress);
+
+/* True once B has been pressed during a cancellable progress UI. Safe to
+ * call between paints so a short tap is not missed. */
+bool odroid_overlay_progress_poll_cancel(void);
+
 size_t   odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_address);
 size_t   odroid_overlay_cache_file_in_ram_with_offset(const char *file_path, uint8_t *dest_address, uint32_t offset);
 

@@ -93,16 +93,27 @@ static void neo_apply_cpu_clock(void)
         SystemClock_Config(2);
 }
 
+/* Hard restart SAI/DMA. Needed after long silent gaps (ROM load) and after
+ * SystemClock_Config (audio PLL). audio_start_playing alone can no-op if SAI
+ * is still BUSY from a previous half-buffer. */
+static void neo_audio_start(void)
+{
+    audio_stop_playing();
+    odroid_audio_init(SAMPLE_RATE);
+    audio_clear_buffers();
+    audio_start_playing(AUDIO_LENGTH);
+    if (common_emu_state.pause_after_frames == 0)
+        odroid_audio_mute(false);
+}
+
 static void SleepWake(void)
 {
-    /* gw_sleep restores the settings OC; re-boost when we had auto-forced
-     * lvl 2, and rebuild SAI (SystemClock_Config reprograms the audio PLL). */
-    if (odroid_settings_cpu_oc_level_get() == 0) {
+    /* gw_sleep restores the settings OC; re-boost when we had auto-forced lvl 2.
+     * Always rebuild SAI — clock restore reprograms the audio PLL even when
+     * OC was already non-zero. */
+    if (odroid_settings_cpu_oc_level_get() == 0)
         SystemClock_Config(2);
-        odroid_audio_init(SAMPLE_RATE);
-        audio_clear_buffers();
-        audio_start_playing(AUDIO_LENGTH);
-    }
+    neo_audio_start();
 }
 
 static void SramSave(void)
@@ -232,6 +243,50 @@ static bool boot_game(void)
     return true;
 }
 
+
+/* True if any face/d-pad button is down (POWER excluded — that is sleep). */
+static bool neo_any_button(const odroid_gamepad_state_t *j)
+{
+    for (int i = 0; i < ODROID_INPUT_MAX; i++) {
+        if (i == ODROID_INPUT_POWER)
+            continue;
+        if (j->values[i])
+            return true;
+    }
+    return false;
+}
+
+/* Show a fatal boot error until any button is pressed, then return to the
+ * launcher. Waits for a release first so a leftover press from launch does
+ * not dismiss immediately. */
+static void neo_fatal_quit(const char *line1, const char *line2)
+{
+    odroid_gamepad_state_t joystick;
+    uint16_t *fb = lcd_get_active_buffer();
+
+    if (fb) {
+        memset(fb, 0, WIDTH * HEIGHT * 2);
+        if (line1)
+            odroid_overlay_draw_text(8, 8, 0, (char *)line1, 0xFFFF, 0);
+        if (line2)
+            odroid_overlay_draw_text(8, 28, 0, (char *)line2, 0xFFFF, 0);
+        odroid_overlay_draw_text(8, 56, 0, "Press any button", 0xFFFF, 0);
+        lcd_swap();
+    }
+
+    do {
+        wdog_refresh();
+        odroid_input_read_gamepad(&joystick);
+    } while (neo_any_button(&joystick));
+
+    do {
+        wdog_refresh();
+        odroid_input_read_gamepad(&joystick);
+    } while (!neo_any_button(&joystick));
+
+    odroid_system_switch_app(0);
+}
+
 void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     odroid_gamepad_state_t joystick;
@@ -246,17 +301,7 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * before any call into neo_state / gno_flash / neocrypt / … */
     if (!neo_load_flash_cold()) {
         boot_fail_reason = "missing neogeo.ro";
-        uint16_t *fb = lcd_get_active_buffer();
-        if (fb) {
-            memset(fb, 0, WIDTH * HEIGHT * 2);
-            odroid_overlay_draw_text(8, 8, 0, "Neo Geo: missing neogeo.ro", 0xFFFF, 0);
-            odroid_overlay_draw_text(8, 28, 0, "Copy /cores/neogeo.ro", 0xFFFF, 0);
-            lcd_swap();
-        }
-        while (1) {
-            wdog_refresh();
-            odroid_input_read_gamepad(&joystick);
-        }
+        neo_fatal_quit("Neo Geo: missing neogeo.ro", "Copy /cores/neogeo.ro");
     }
 #endif
 
@@ -275,28 +320,24 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     options[0] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
 
-    audio_start_playing(AUDIO_LENGTH);
-
+    /* Start SAI/DMA only after ROM/flash load. Starting earlier leaves the
+     * DMA half unfilled for seconds (QSPI cache / zip inflate) and can leave
+     * audio silently dead until the next cold boot. */
     if (!boot_game()) {
-        uint16_t *fb = lcd_get_active_buffer();
-        const char *why = boot_fail_reason ? boot_fail_reason : "unknown";
-        if (fb) {
-            memset(fb, 0, WIDTH * HEIGHT * 2);
-            odroid_overlay_draw_text(8, 8, 0, "Neo Geo: boot failed", 0xFFFF, 0);
-            odroid_overlay_draw_text(8, 28, 0, (char *)why, 0xFFFF, 0);
-            lcd_swap();
-        }
-        while (1) {
-            wdog_refresh();
-            odroid_input_read_gamepad(&joystick);
-            common_emu_input_loop(&joystick, options, &neo_repaint);
-        }
+        /* User cancelled flash cache — back to launcher, no error screen. */
+        if (boot_fail_reason && strcmp(boot_fail_reason, "Cancelled") == 0)
+            odroid_system_switch_app(0);
+
+        neo_fatal_quit("Neo Geo: boot failed",
+                       boot_fail_reason ? boot_fail_reason : "unknown");
     }
 
     if (load_state)
         odroid_system_emu_load_state(save_slot);
     else
         lcd_clear_buffers();
+
+    neo_audio_start();
 
     while (1) {
         wdog_refresh();

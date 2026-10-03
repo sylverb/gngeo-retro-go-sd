@@ -184,3 +184,14 @@ void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress)
         printf("\n");
     fflush(stdout);
 }
+
+bool odroid_overlay_draw_progress_bar_cancellable(const char *header, uint8_t progress)
+{
+    odroid_overlay_draw_progress_bar(header, progress);
+    return true;
+}
+
+bool odroid_overlay_progress_poll_cancel(void)
+{
+    return false;
+}
