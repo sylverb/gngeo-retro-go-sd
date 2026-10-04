@@ -27,6 +27,7 @@ void neo_game_special_init(const char *name);
  * Map a zip member basename to a canonical short name (mslug5, kof2003, …).
  * Matches MAME chip names (e.g. 268-p1cr.p1) and decrypt_neogeo_zip output
  * (mslug5-p1.p1). Returns a static string, or NULL if unknown.
+ * Device: implemented in neo_game_detect.c → gngeo.ro (cold).
  */
 const char *neo_game_match_member(const char *member_basename);
 

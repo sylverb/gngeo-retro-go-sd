@@ -59,6 +59,7 @@ SECTIONS
       build/core/neo_state.o
       build/core/gno_flash.o
       build/core/neo_zip_flash.o
+      build/core/neo_game_detect.o
       build/core/neo_zip.o
       build/core/miniz.o
       build/core/neocrypt.o
@@ -74,6 +75,7 @@ SECTIONS
       build/core/neo_state.o
       build/core/gno_flash.o
       build/core/neo_zip_flash.o
+      build/core/neo_game_detect.o
       build/core/neo_zip.o
       build/core/miniz.o
       build/core/neocrypt.o
@@ -141,6 +143,8 @@ SECTIONS
     build/core/gno_flash.o(.text* .rodata*)
     /* ZIP → flash cache (init-only; frees ~36 KiB RAM_EMU for Musashi JT). */
     build/core/neo_zip_flash.o(.text* .rodata*)
+    /* Member→game id tables (boot-only; keeps PVC 8 KiB in RAM_EMU). */
+    build/core/neo_game_detect.o(.text* .rodata*)
     build/core/neo_zip.o(.text* .rodata*)
     build/core/miniz.o(.text* .rodata*)
     build/core/neocrypt.o(.text* .rodata*)

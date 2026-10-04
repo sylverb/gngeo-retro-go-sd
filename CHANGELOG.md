@@ -1,48 +1,18 @@
 # Changelog
 
-## [v0.0.4]
+## [v0.0.5]
 
 ### Added
 
-- Pause-menu options **System** (AES / MVS) and **Region** (Japan / USA /
-  Europe), persisted via core settings. AES/MVS drives `STATUS_A`/`STATUS_B` and
-  `REG_BRDFIX`; region is stamped into UniBIOS backup RAM / memcard (`V2`
-  header). Confirm with A to soft-reset and apply (clears 68k RAM so UniBIOS
-  re-reads prefs; STATUS is set before BIOS boot — was stuck MVS/`0xFF`).
+- Nothing.
 
 ### Changed
 
-- PVC / SMA / `fix_bank` detection uses **chip filenames inside the .zip**
-  (MAME `268-p1cr.p1`, decrypt `mslug5-p1.p1`, …), not the archive stem.
-  Renaming `mslug5_dec.zip` → `foo.zip` still arms the right handlers; zip stem
-  remains the QSPI cache key only. Fallback to stem if no member matches.
-- Core artifacts renamed `neogeo.*` → `gngeo.bin` / `gngeo.ro` / `gngeo_host`
-  (SD: `/cores/gngeo.bin` + `/cores/gngeo.ro`). ROM/BIOS dirs stay `/roms|bios/neogeo/`.
-- Default UniBIOS boot remains AES + Europe (CONSOLE); MVS is opt-in.
+- Nothing.
 
 ### Fixed
 
-- Refuse to boot a ROM that does not fit in the remaining QSPI flash cache
-  (clear error instead of failing mid-cache).
-- Decrypted 2 MiB P sets (`bangbead_dec`, `ganryu_dec`, …): skip MAME
-  `CONTINUE` half-swap when the zip is already memory-order (was double-swapped
-  → white screen). Program cache key bumped to `p2`.
-- `decrypt_neogeo_zip`: mirror short CMC50 M1 dumps to 512 KiB before decrypt
-  (fixes kof2000 match music / garbage ADPCM banks).
-- `decrypt_neogeo_zip`: write CMC50 M1 as plain 512 KiB (not the 0x90000
-  runtime banking image) so Z80 banks match FBNeo/neo_zip — fixes kof2003
-  looping music / missing SFX and other CMC50 audio.
-- mslug5 softlock: 68k master cycle counter could wrap after a long frame-wait
-  busy-loop; `m68k_run` then no-op'd forever (watchdog reset did not clear
-  cycles). Rebase cycles before overflow and on CPU reset.
-- Intermittent silent boot: defer `audio_start_playing` until after ROM/flash
-  load so SAI/DMA is not left unfed during a long `boot_game()`. Hard-restart
-  SAI (stop/init/clear/start) after load and on every SleepWake.
-- Cache 512 KiB cart S1 (`kof2000` / `kof2003`): stream convert tile-by-tile
-  into QSPI instead of staging the whole SFIX in RAM_EMU (`OOM staging sfix`).
-- UniBIOS defaults to CONSOLE: present AES on `REG_STATUS_A`/`STATUS_B` (FBNeo
-  `0x3F & ~0x18`) and treat `REG_BRDFIX` as a no-op when a cart S ROM exists.
-  `kof2003` AES splash omits “SNK forever” — restore those board SFIX rows.
+- Move PVC code/data to .ro to free some ram to fit PVC data (fix Metal Slug 5 & other PVC games).
 
 ### Install
 

@@ -22,6 +22,7 @@ $(PORT)/gngeo_platform.c \
 $(PORT)/neo_mem.c \
 $(PORT)/gno_flash.c \
 $(PORT)/neo_zip_flash.c \
+$(PORT)/neo_game_detect.c \
 $(PORT)/neo_pvc.c \
 $(PORT)/zip/neo_zip.c \
 $(PORT)/zip/miniz.c \
