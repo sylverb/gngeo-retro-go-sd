@@ -3,6 +3,11 @@
 /* Ensure MAME .zip regions are in QSPI (converted where needed) and bind
  * memory.rom. Returns 1 on success. */
 int neo_zip_flash_load(const char *zip_path);
+
+/* TerraOnion / NeoSD .neo (4 KiB header + P,S,M,V1,V2,C). Same flash cache
+ * keys as the zip path. Returns 1 on success. */
+int neo_neo_flash_load(const char *neo_path);
+
 const char *neo_zip_flash_last_error(void);
 
 /* Bind flash-mapped cart regions + load system BIOS (shared with .gno).

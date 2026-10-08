@@ -27,7 +27,6 @@
 #include "transpack.h"
 #include "gno_flash.h"
 #include "neo_pvc.h"
-#include "neo_settings.h"
 
 #ifdef GP2X
 #include "ym2610-940/940shared.h"
@@ -735,18 +734,20 @@ void mem68k_store_setting_byte(Uint32 addr, Uint8 data) {
 
     if (addr == 0x000b) { /* select board fix */
         /*
-         * AES has no board SFIX — REG_BRDFIX is a no-op (MAME/FBNeo AES).
-         * On MVS, honour BRDFIX → board sfix. On AES, stay on cart S ROM so
-         * UniBIOS CONSOLE FIX codes match the tiles they index.
+         * Real AES has no board SFIX (MAME/FBNeo: BRDFIX is a no-op → cart S).
+         * We always ship /bios/neogeo/sfix.sfix, so honour BRDFIX with that
+         * when present — UniBIOS boot text stays readable on homebrew carts
+         * whose S ROM has no SNK charset. Fall back to cart S only if board
+         * sfix failed to load. GAMEFIX (0x1b) still selects cart S.
          */
-        if (neo_settings_is_aes() && memory.rom.game_sfix.p) {
-            current_fix = memory.rom.game_sfix.p;
-            fix_usage = memory.fix_game_usage;
-            memory.vid.currentfix = 1;
-        } else {
+        if (memory.rom.bios_sfix.p) {
             current_fix = memory.rom.bios_sfix.p;
             fix_usage = memory.fix_board_usage;
             memory.vid.currentfix = 0;
+        } else if (memory.rom.game_sfix.p) {
+            current_fix = memory.rom.game_sfix.p;
+            fix_usage = memory.fix_game_usage;
+            memory.vid.currentfix = 1;
         }
         return;
     }

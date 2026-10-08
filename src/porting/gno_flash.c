@@ -1035,16 +1035,24 @@ int init_game(char *rom_name)
         return GN_FALSE;
 
     ext = strrchr(rom_name, '.');
-    if (ext && ((ext[1] == 'z' || ext[1] == 'Z') &&
-                (ext[2] == 'i' || ext[2] == 'I') &&
-                (ext[3] == 'p' || ext[3] == 'P') &&
-                ext[4] == '\0')) {
-        if (!neo_zip_flash_load(rom_name)) {
-            gno_set_err(neo_zip_flash_last_error());
-            return GN_FALSE;
+    if (ext && ext[1] && ext[2] && ext[3] && ext[4] == '\0') {
+        char e0 = ext[1] | 0x20, e1 = ext[2] | 0x20, e2 = ext[3] | 0x20;
+        if (e0 == 'z' && e1 == 'i' && e2 == 'p') {
+            if (!neo_zip_flash_load(rom_name)) {
+                gno_set_err(neo_zip_flash_last_error());
+                return GN_FALSE;
+            }
+            reset_frame_skip();
+            return GN_TRUE;
         }
-        reset_frame_skip();
-        return GN_TRUE;
+        if (e0 == 'n' && e1 == 'e' && e2 == 'o') {
+            if (!neo_neo_flash_load(rom_name)) {
+                gno_set_err(neo_zip_flash_last_error());
+                return GN_FALSE;
+            }
+            reset_frame_skip();
+            return GN_TRUE;
+        }
     }
 
     if (gno_flash_load(rom_name) != GN_TRUE)

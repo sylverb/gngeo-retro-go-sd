@@ -710,10 +710,10 @@ void draw_screen(void) {
 			offs += 2;
 
 
-			if (memory.nb_of_tiles > 0x10000 && (tileatr & 0x10)) tileno += 0x10000;
-			if (memory.nb_of_tiles > 0x20000 && (tileatr & 0x20)) tileno += 0x20000;
-			if (memory.nb_of_tiles > 0x40000 && (tileatr & 0x40)) tileno += 0x40000;
-
+			/* Attr bits 4-7 = tile number MSBs (MAME: ((attr<<12)&0xf0000)|code).
+			 * Always combine, then mirror into the C ROM window — skipping
+			 * out-of-range tiles blanks carts with small C (e.g. Robocop 1 MiB). */
+			tileno |= ((Uint32)(tileatr & 0x00f0) << 12);
 
 			/* animation automatique */
 			/*if (tileatr&0x80) printf("PLOP\n");*/
@@ -727,10 +727,7 @@ void draw_screen(void) {
 
 			if (!memory.rom.tiles.p || memory.nb_of_tiles == 0)
 				continue;
-			if (tileno >= memory.nb_of_tiles) {
-				//printf("Tno %04x Tat %04x %d\n",tileno,tileatr,memory.nb_of_tiles);
-				continue;
-			}
+			tileno %= memory.nb_of_tiles;
 
 
 			if (fullmode == 2 || (fullmode == 1 && rzy == 0xff)) {
@@ -921,14 +918,16 @@ void draw_screen_scanline(int start_line, int end_line, int refresh) {
 			tileno = READ_WORD(&vidram[offs + (tile << 2)]);
 			tileatr = READ_WORD(&vidram[offs + (tile << 2) + 2]);
 
-			if (memory.nb_of_tiles > 0x10000 && (tileatr & 0x10)) tileno += 0x10000;
-			if (memory.nb_of_tiles > 0x20000 && (tileatr & 0x20)) tileno += 0x20000;
-			if (memory.nb_of_tiles > 0x40000 && (tileatr & 0x40)) tileno += 0x40000;
+			tileno |= ((Uint32)(tileatr & 0x00f0) << 12);
 
 			/* animation automatique */
 			if (tileatr & 0x8) tileno = (tileno&~7)+((tileno + neogeo_frame_counter)&7);
 			else if (tileatr & 0x4) tileno = (tileno&~3)+((tileno + neogeo_frame_counter)&3);
 			if (tileatr & 0x02) yoffs ^= 0x0f; /* flip y */
+
+			if (!memory.rom.tiles.p || memory.nb_of_tiles == 0)
+				continue;
+			tileno %= memory.nb_of_tiles;
 
 			penusage = PEN_USAGE(tileno);
 			if (memory.vid.spr_cache.data) {

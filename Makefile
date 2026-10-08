@@ -1,7 +1,7 @@
 # Neo Geo (GnGeo) core for Retro-Go SD.
 #
 #   make / make docker  → gngeo.bin + gngeo.ro
-# ROMs: /roms/neogeo/*.zip (MAME / decrypted) or *.gno (XIP — see tools/)
+# ROMs: /roms/neogeo/*.zip (MAME / decrypted), *.neo (TerraOnion), or *.gno
 # Encrypted sets: make decrypt-zip && ./tools/decrypt_neogeo_zip mslug5.zip -o mslug5_dec.zip
 
 PROJECT_KIND ?= core
@@ -119,7 +119,7 @@ pack: $(TARGET_BIN) $(RO_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 	$(V)python3 $(PACK_CORE) \
 		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
 		--system-name "Neo Geo" --dirname $(ROM_DIRNAME) \
-		--extensions "zip gno" \
+		--extensions "zip gno neo" \
 		--core-name "Neo Geo" \
 		--version "$(CORE_VERSION)" \
 		--cheat-ext "" \

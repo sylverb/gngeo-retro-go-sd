@@ -4,7 +4,8 @@
 
 ### Added
 
-- Nothing.
+- Load TerraOnion / NeoSD `.neo` carts from `/roms/neogeo/*.neo` (same QSPI
+  cache path as MAME zip).
 
 ### Changed
 
@@ -13,6 +14,9 @@
 ### Fixed
 
 - Move PVC code/data to .ro to free some ram to fit PVC data (fix Metal Slug 5 & other PVC games).
+- Mirror sprite tile numbers into the C ROM size (MAME-style) instead of
+  skipping out-of-range tiles — fixes black screen after Robocop’s options
+  menu (1 MiB C cart).
 
 ### Install
 

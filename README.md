@@ -7,7 +7,7 @@ GPL-licensed Neo Geo AES/MVS emulator core for
 |--|--|
 | Packed binary | `gngeo.bin` → `/cores/gngeo.bin` |
 | Cold sidecar | `gngeo.ro` → `/cores/gngeo.ro` (required — init/savestate/tables) |
-| ROMs | `/roms/neogeo/*.gno` (XIP tiles — see below) |
+| ROMs | `/roms/neogeo/*.{zip,neo,gno}` (see below) |
 | BIOS | `/bios/neogeo/` (shared, not inside each `.gno`) |
 | Entry | `app_main_neogeo` |
 | Audio | YM2610 @ 18000 Hz mono |
@@ -56,7 +56,8 @@ make host
 # or: NEOGEO_BIOS=uni-bios-40 ./gngeo_host host_roms/maglord.gno
 ```
 
-Unencrypted MAME `.zip` sets also work (`./gngeo_host blazstar.zip`).
+Unencrypted MAME `.zip` and TerraOnion `.neo` also work
+(`./gngeo_host blazstar.zip`, `./gngeo_host neotris_beta2.neo`).
 
 ### Encrypted sets (CMC42/50, SMA, PVC, PCM2)
 

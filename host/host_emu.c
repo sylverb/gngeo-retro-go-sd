@@ -292,10 +292,61 @@ void *lcd_get_inactive_buffer(void)
 void lcd_swap(void)
 {
     host_poll_events();
+    /* NEO_AUTO_START=1: Robocop-style options — Down to START GAME, then A. */
+    if (getenv("NEO_AUTO_START")) {
+        static int phase;
+        /* After UniBIOS + attract settle (~200f), move selection down. */
+        if (phase < 8 && frame_counter == 420 + phase * 10) {
+            host_pad.values[ODROID_INPUT_DOWN] = 1;
+        } else if (phase < 8 && frame_counter == 420 + phase * 10 + 3) {
+            host_pad.values[ODROID_INPUT_DOWN] = 0;
+            phase++;
+        } else if (phase == 8 && frame_counter == 520) {
+            host_pad.values[ODROID_INPUT_A] = 1;
+        } else if (phase == 8 && frame_counter == 528) {
+            host_pad.values[ODROID_INPUT_A] = 0;
+            phase = 9;
+        }
+    }
     host_platform_present_rgb565((const uint16_t *)lcd_get_active_buffer(),
                                  GW_LCD_WIDTH, GW_LCD_HEIGHT);
     active_framebuffer ^= 1;
     frame_counter++;
+    /* Optional: NEO_DUMP_FB=path.ppm after NEO_DUMP_FB_FRAME (default 180). */
+    {
+        const char *dump = getenv("NEO_DUMP_FB");
+        static int dumped;
+        if (dump && dump[0] && !dumped) {
+            const char *fs = getenv("NEO_DUMP_FB_FRAME");
+            unsigned want = fs && fs[0] ? (unsigned)atoi(fs) : 180u;
+            if (frame_counter >= want) {
+                FILE *out = fopen(dump, "wb");
+                if (out) {
+                    const uint16_t *fb =
+                        (const uint16_t *)lcd_get_inactive_buffer();
+                    unsigned x, y, nz = 0;
+                    fprintf(out, "P6\n%d %d\n255\n", GW_LCD_WIDTH, GW_LCD_HEIGHT);
+                    for (y = 0; y < GW_LCD_HEIGHT; y++) {
+                        for (x = 0; x < GW_LCD_WIDTH; x++) {
+                            uint16_t p = fb[y * GW_LCD_WIDTH + x];
+                            unsigned r = ((p >> 11) & 31) * 255 / 31;
+                            unsigned g = ((p >> 5) & 63) * 255 / 63;
+                            unsigned b = (p & 31) * 255 / 31;
+                            fputc((int)r, out);
+                            fputc((int)g, out);
+                            fputc((int)b, out);
+                            if (p)
+                                nz++;
+                        }
+                    }
+                    fclose(out);
+                    printf("host: dumped FB %s nonzero=%u/%u\n", dump, nz,
+                           (unsigned)(GW_LCD_WIDTH * GW_LCD_HEIGHT));
+                }
+                dumped = 1;
+            }
+        }
+    }
     host_maybe_quit();
 }
 

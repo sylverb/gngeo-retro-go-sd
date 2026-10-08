@@ -517,9 +517,15 @@ static int detect_game_from_zip(neo_zip_t *z, char *out, size_t out_sz)
     return 1;
 }
 
-static void make_key(char *out, size_t out_sz, const char *stem, const char *suf)
+/* kind: "" for zip (legacy keys), "neo" for TerraOnion — avoid sharing a
+ * poisoned cache between robocop.zip and robocop.neo (same stem). */
+static void make_key(char *out, size_t out_sz, const char *stem, const char *suf,
+                     const char *kind)
 {
-    snprintf(out, out_sz, "neogeo/%s/%s", stem, suf);
+    if (kind && kind[0])
+        snprintf(out, out_sz, "neogeo/%s/%s/%s", stem, kind, suf);
+    else
+        snprintf(out, out_sz, "neogeo/%s/%s", stem, suf);
 }
 
 /* ---- converts -------------------------------------------------------- */
@@ -706,13 +712,14 @@ static void prog_finish(void)
     (void)prog_paint(100, 1);
 }
 
-static int key_hit(const char *stem, const char *suf, uint32_t expect)
+static int key_hit(const char *stem, const char *suf, uint32_t expect,
+                   const char *kind)
 {
     char key[48];
     uint32_t got = 0;
     const uint8_t *hit;
 
-    make_key(key, sizeof(key), stem, suf);
+    make_key(key, sizeof(key), stem, suf, kind);
     hit = lookup_data_in_flash(key, &got);
     return (hit && got == expect) ? 1 : 0;
 }
@@ -738,11 +745,13 @@ static void prog_plan(const ROM_DEF *drv, const char *stem)
     uint32_t sfix = drv->romsize[REGION_FIXED_LAYER_CARTRIDGE];
     uint32_t gfix = sfix >> 5;
     uint32_t spr = (tiles >> 11) * 4u;
-    int hit_p = key_hit(stem, "p2", p);
-    int hit_m = key_hit(stem, "m", m);
-    int hit_v = key_hit(stem, "v", v);
-    int hit_s = key_hit(stem, "s", sfix) && key_hit(stem, "gfix", gfix);
-    int hit_c = key_hit(stem, "c", tiles) && key_hit(stem, "spr", spr);
+    int hit_p = key_hit(stem, "p2", p, NULL);
+    int hit_m = key_hit(stem, "m", m, NULL);
+    int hit_v = key_hit(stem, "v", v, NULL);
+    int hit_s = key_hit(stem, "s", sfix, NULL) &&
+                key_hit(stem, "gfix", gfix, NULL);
+    int hit_c = key_hit(stem, "c", tiles, NULL) &&
+                key_hit(stem, "spr", spr, NULL);
 
     s_prog_done = 0;
     s_prog_total = p + m + v + sfix + gfix + tiles + spr;
@@ -994,7 +1003,7 @@ static int ensure_raw_region(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     const uint8_t *hit;
     flash_stream_t st;
 
-    make_key(key, sizeof(key), stem, suf);
+    make_key(key, sizeof(key), stem, suf, NULL);
     hit = lookup_data_in_flash(key, &got);
     if (hit && got == expect) {
         *out_ptr = hit;
@@ -1038,8 +1047,8 @@ static int ensure_sfix(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     uint32_t scrc = 0;
     int i;
 
-    make_key(key_s, sizeof(key_s), stem, "s");
-    make_key(key_g, sizeof(key_g), stem, "gfix");
+    make_key(key_s, sizeof(key_s), stem, "s", NULL);
+    make_key(key_g, sizeof(key_g), stem, "gfix", NULL);
     hit_s = lookup_data_in_flash(key_s, &got_s);
     hit_g = lookup_data_in_flash(key_g, &got_g);
     if (hit_s && got_s == sfix_sz && hit_g && got_g == gfix_sz) {
@@ -1222,8 +1231,8 @@ static int ensure_tiles(neo_zip_t *z, const ROM_DEF *drv, const char *stem,
     crom_pair_t pairs[8];
     int np = 0;
 
-    make_key(key_c, sizeof(key_c), stem, "c");
-    make_key(key_spr, sizeof(key_spr), stem, "spr");
+    make_key(key_c, sizeof(key_c), stem, "c", NULL);
+    make_key(key_spr, sizeof(key_spr), stem, "spr", NULL);
     hit_c = lookup_data_in_flash(key_c, &got_c);
     hit_spr = lookup_data_in_flash(key_spr, &got_spr);
     if (hit_c && got_c == tiles && hit_spr && got_spr == spr_usage_sz) {
@@ -1491,6 +1500,454 @@ int neo_zip_flash_load(const char *zip_path)
     if (!neo_rom_bind_regions(game_id, p, p_sz, m, m_sz, v, v_sz,
                               s, s_sz, gfix, g_sz, c, c_sz, spr, spr_sz)) {
         printf("neo_zip: bind failed: %s\n", gno_flash_last_error());
+        zip_set_err(gno_flash_last_error());
+        return 0;
+    }
+    return 1;
+}
+
+/* ---- TerraOnion .neo -------------------------------------------------- */
+
+#define NEO_FILE_HEADER_SIZE 4096u
+
+typedef struct {
+    uint32_t p, s, m, v1, v2, c;
+    uint32_t v; /* v1 + v2 */
+} neo_hdr_sizes_t;
+
+static int neo_read_fully(FILE *f, void *dst, uint32_t expect)
+{
+    uint8_t *p = (uint8_t *)dst;
+    uint32_t got = 0;
+    while (got < expect) {
+        size_t n = expect - got;
+        size_t r;
+        if (n > 4096)
+            n = 4096;
+        r = fread(p + got, 1, n, f);
+        if (r == 0)
+            return 0;
+        got += (uint32_t)r;
+        if (!prog_bump((uint32_t)r))
+            return 0;
+    }
+    return 1;
+}
+
+static int neo_parse_header(FILE *f, neo_hdr_sizes_t *sz, uint32_t *file_sz)
+{
+    uint8_t hdr[NEO_FILE_HEADER_SIZE];
+    uint32_t need;
+
+    if (fseek(f, 0, SEEK_END) != 0)
+        return 0;
+    {
+        long end = ftell(f);
+        if (end < (long)NEO_FILE_HEADER_SIZE)
+            return 0;
+        *file_sz = (uint32_t)end;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0)
+        return 0;
+    if (fread(hdr, 1, NEO_FILE_HEADER_SIZE, f) != NEO_FILE_HEADER_SIZE)
+        return 0;
+    if (hdr[0] != 'N' || hdr[1] != 'E' || hdr[2] != 'O' || hdr[3] != 0x01)
+        return 0;
+
+    memcpy(&sz->p, hdr + 0x04, 4);
+    memcpy(&sz->s, hdr + 0x08, 4);
+    memcpy(&sz->m, hdr + 0x0c, 4);
+    memcpy(&sz->v1, hdr + 0x10, 4);
+    memcpy(&sz->v2, hdr + 0x14, 4);
+    memcpy(&sz->c, hdr + 0x18, 4);
+    sz->v = sz->v1 + sz->v2;
+
+    if (sz->p == 0 || sz->m == 0 || sz->s == 0 || sz->v == 0 || sz->c == 0)
+        return 0;
+    /* Sprite ROM must be whole tiles (128 B). */
+    if (sz->c & 127u)
+        return 0;
+
+    need = NEO_FILE_HEADER_SIZE + sz->p + sz->s + sz->m + sz->v + sz->c;
+    if (need > *file_sz)
+        return 0;
+    return 1;
+}
+
+static int neo_ensure_raw(FILE *f, const char *stem, const char *suf,
+                          const char *label, uint32_t file_off, uint32_t expect,
+                          const uint8_t **out_ptr, uint32_t *out_sz)
+{
+    char key[48];
+    uint32_t got = 0;
+    const uint8_t *hit;
+    flash_stream_t st;
+    uint8_t buf[4096];
+    uint32_t left;
+
+    make_key(key, sizeof(key), stem, suf, "neo");
+    hit = lookup_data_in_flash(key, &got);
+    if (hit && got == expect) {
+        *out_ptr = hit;
+        *out_sz = got;
+        return 1;
+    }
+    if (!prog_next_file(label))
+        return 0;
+    if (fseek(f, (long)file_off, SEEK_SET) != 0) {
+        zip_set_err("neo seek failed");
+        return 0;
+    }
+    memset(&st, 0, sizeof(st));
+    if (!stream_begin(&st, key, expect)) {
+        zip_set_err("ROM too large for flash");
+        return 0;
+    }
+    left = expect;
+    while (left) {
+        uint32_t n = left > sizeof(buf) ? (uint32_t)sizeof(buf) : left;
+        if (fread(buf, 1, n, f) != n) {
+            stream_abort(&st);
+            zip_set_err("neo short read");
+            return 0;
+        }
+        if (!append_bytes(&st, buf, n)) {
+            stream_abort(&st);
+            zip_set_err("flash append failed");
+            return 0;
+        }
+        if (!prog_bump(n)) {
+            stream_abort(&st);
+            return 0;
+        }
+        left -= n;
+    }
+    hit = stream_finish(&st);
+    if (!hit) {
+        zip_set_err("flash finish failed");
+        return 0;
+    }
+    printf("neo_neo: cached %s (%u)\n", key, (unsigned)expect);
+    *out_ptr = hit;
+    *out_sz = expect;
+    return 1;
+}
+
+static int neo_ensure_sfix(FILE *f, const char *stem, uint32_t file_off,
+                           uint32_t sfix_sz, const uint8_t **s_out,
+                           uint32_t *s_sz, const uint8_t **g_out, uint32_t *g_sz)
+{
+    char key_s[48], key_g[48];
+    uint32_t gfix_sz = sfix_sz >> 5;
+    uint32_t got_s = 0, got_g = 0;
+    const uint8_t *hit_s, *hit_g;
+    uint8_t *sfix_buf, *gfix_usage;
+    flash_stream_t st;
+
+    make_key(key_s, sizeof(key_s), stem, "s", "neo");
+    make_key(key_g, sizeof(key_g), stem, "gfix", "neo");
+    hit_s = lookup_data_in_flash(key_s, &got_s);
+    hit_g = lookup_data_in_flash(key_g, &got_g);
+    if (hit_s && got_s == sfix_sz && hit_g && got_g == gfix_sz) {
+        *s_out = hit_s;
+        *s_sz = sfix_sz;
+        *g_out = hit_g;
+        *g_sz = gfix_sz;
+        return 1;
+    }
+
+    if (!prog_next_file("srom"))
+        return 0;
+    if (fseek(f, (long)file_off, SEEK_SET) != 0) {
+        zip_set_err("neo sfix seek");
+        return 0;
+    }
+    sfix_buf = (uint8_t *)ram_malloc(sfix_sz);
+    gfix_usage = (uint8_t *)ram_malloc(gfix_sz);
+    if (!sfix_buf || !gfix_usage) {
+        zip_set_err("OOM staging sfix");
+        return 0;
+    }
+    memset(gfix_usage, 0, gfix_sz);
+    if (!neo_read_fully(f, sfix_buf, sfix_sz)) {
+        zip_set_err("neo sfix read");
+        return 0;
+    }
+    convert_sfix_inplace(sfix_buf, (int)sfix_sz, gfix_usage);
+
+    memset(&st, 0, sizeof(st));
+    if (!stream_begin(&st, key_s, sfix_sz) ||
+        !append_bytes(&st, sfix_buf, sfix_sz)) {
+        stream_abort(&st);
+        zip_set_err("ROM too large for flash");
+        return 0;
+    }
+    hit_s = stream_finish(&st);
+    if (!hit_s) {
+        zip_set_err("sfix finish failed");
+        return 0;
+    }
+
+    if (!prog_next_file("gfix"))
+        return 0;
+    memset(&st, 0, sizeof(st));
+    if (!stream_begin(&st, key_g, gfix_sz) ||
+        !append_bytes(&st, gfix_usage, gfix_sz)) {
+        stream_abort(&st);
+        zip_set_err("ROM too large for flash");
+        return 0;
+    }
+    hit_g = stream_finish(&st);
+    if (!hit_g) {
+        zip_set_err("gfix finish failed");
+        return 0;
+    }
+    if (!prog_bump(gfix_sz))
+        return 0;
+    printf("neo_neo: cached %s + %s\n", key_s, key_g);
+    *s_out = hit_s;
+    *s_sz = sfix_sz;
+    *g_out = hit_g;
+    *g_sz = gfix_sz;
+    return 1;
+}
+
+static int neo_ensure_tiles(FILE *f, const char *stem, uint32_t file_off,
+                            uint32_t tiles, const uint8_t **c_out, uint32_t *c_sz,
+                            const uint8_t **spr_out, uint32_t *spr_sz)
+{
+    char key_c[48], key_spr[48];
+    uint32_t spr_usage_sz = (tiles >> 11) * 4u;
+    uint32_t got_c = 0, got_spr = 0;
+    const uint8_t *hit_c, *hit_spr;
+    uint32_t *spr_usage;
+    flash_stream_t st;
+    uint32_t tileno = 0;
+    uint32_t left;
+
+    make_key(key_c, sizeof(key_c), stem, "c", "neo");
+    make_key(key_spr, sizeof(key_spr), stem, "spr", "neo");
+    hit_c = lookup_data_in_flash(key_c, &got_c);
+    hit_spr = lookup_data_in_flash(key_spr, &got_spr);
+    if (hit_c && got_c == tiles && hit_spr && got_spr == spr_usage_sz) {
+        *c_out = hit_c;
+        *c_sz = tiles;
+        *spr_out = hit_spr;
+        *spr_sz = spr_usage_sz;
+        return 1;
+    }
+
+    if (!prog_next_file("crom"))
+        return 0;
+    if (fseek(f, (long)file_off, SEEK_SET) != 0) {
+        zip_set_err("neo crom seek");
+        return 0;
+    }
+
+    spr_usage = (uint32_t *)ram_calloc(1, spr_usage_sz);
+    if (!spr_usage) {
+        zip_set_err("OOM staging spr");
+        return 0;
+    }
+
+    memset(&st, 0, sizeof(st));
+    if (!stream_begin(&st, key_c, tiles)) {
+        zip_set_err("ROM too large for flash");
+        return 0;
+    }
+
+    /* .neo C is already byte-interleaved (c1/c2); each tile is 128 B. */
+    left = tiles;
+    while (left) {
+        uint8_t tile[128];
+        uint32_t u;
+        if (left < 128) {
+            stream_abort(&st);
+            zip_set_err("neo crom truncated");
+            return 0;
+        }
+        if (fread(tile, 1, 128, f) != 128) {
+            stream_abort(&st);
+            zip_set_err("neo crom short");
+            return 0;
+        }
+        u = convert_one_tile(tile, (int)tileno);
+        spr_usage[tileno >> 4] |= u;
+        if (!append_bytes(&st, tile, 128)) {
+            stream_abort(&st);
+            zip_set_err("tile append failed");
+            return 0;
+        }
+        if (!prog_bump(128)) {
+            stream_abort(&st);
+            return 0;
+        }
+        tileno++;
+        left -= 128;
+    }
+    hit_c = stream_finish(&st);
+    if (!hit_c) {
+        zip_set_err("tiles finish failed");
+        return 0;
+    }
+
+    if (!prog_next_file("spr"))
+        return 0;
+    memset(&st, 0, sizeof(st));
+    if (!stream_begin(&st, key_spr, spr_usage_sz) ||
+        !append_bytes(&st, spr_usage, spr_usage_sz)) {
+        stream_abort(&st);
+        zip_set_err("ROM too large for flash");
+        return 0;
+    }
+    hit_spr = stream_finish(&st);
+    if (!hit_spr) {
+        zip_set_err("spr finish failed");
+        return 0;
+    }
+    if (!prog_bump(spr_usage_sz))
+        return 0;
+    printf("neo_neo: cached %s + %s\n", key_c, key_spr);
+    *c_out = hit_c;
+    *c_sz = tiles;
+    *spr_out = hit_spr;
+    *spr_sz = spr_usage_sz;
+    return 1;
+}
+
+int neo_neo_flash_load(const char *neo_path)
+{
+    char stem[32];
+    neo_hdr_sizes_t sz;
+    uint32_t file_sz = 0;
+    uint32_t off_p, off_s, off_m, off_v, off_c;
+    uint32_t gfix_sz, spr_sz_expect;
+    FILE *f;
+    const uint8_t *p, *m, *v, *s, *gfix, *c, *spr;
+    uint32_t p_sz, m_sz, v_sz, s_sz, g_sz, c_sz, spr_sz;
+
+    zip_err[0] = 0;
+    if (!neo_path || !neo_path[0]) {
+        zip_set_err("no path");
+        return 0;
+    }
+    path_stem(neo_path, stem, sizeof(stem));
+
+    f = fopen(neo_path, "rb");
+    if (!f) {
+        zip_set_err("neo open failed");
+        return 0;
+    }
+    if (!neo_parse_header(f, &sz, &file_sz)) {
+        fclose(f);
+        zip_set_err("bad .neo header");
+        return 0;
+    }
+
+    off_p = NEO_FILE_HEADER_SIZE;
+    off_s = off_p + sz.p;
+    off_m = off_s + sz.s;
+    off_v = off_m + sz.m;
+    off_c = off_v + sz.v;
+
+    gfix_sz = sz.s >> 5;
+    spr_sz_expect = (sz.c >> 11) * 4u;
+
+    printf("neo_neo: '%s' p=%u m=%u s=%u v=%u c=%u\n", stem,
+           (unsigned)sz.p, (unsigned)sz.m, (unsigned)sz.s, (unsigned)sz.v,
+           (unsigned)sz.c);
+
+    /* Progress: same weights as zip (raw regions + derived gfix/spr). */
+    s_prog_done = 0;
+    s_prog_total = sz.p + sz.m + sz.v + sz.s + gfix_sz + sz.c + spr_sz_expect;
+    s_prog_since_paint = 0;
+    s_prog_steps = 0;
+    s_prog_step = 0;
+    s_prog_last_pct = 0xff;
+    s_prog_hdr[0] = 0;
+
+    if (!key_hit(stem, "p2", sz.p, "neo"))
+        s_prog_steps++;
+    else
+        s_prog_done += sz.p;
+    if (!key_hit(stem, "m", sz.m, "neo"))
+        s_prog_steps++;
+    else
+        s_prog_done += sz.m;
+    if (!key_hit(stem, "v", sz.v, "neo"))
+        s_prog_steps++;
+    else
+        s_prog_done += sz.v;
+    if (!(key_hit(stem, "s", sz.s, "neo") &&
+          key_hit(stem, "gfix", gfix_sz, "neo")))
+        s_prog_steps = (uint8_t)(s_prog_steps + 2);
+    else
+        s_prog_done += sz.s + gfix_sz;
+    if (!(key_hit(stem, "c", sz.c, "neo") &&
+          key_hit(stem, "spr", spr_sz_expect, "neo")))
+        s_prog_steps = (uint8_t)(s_prog_steps + 2);
+    else
+        s_prog_done += sz.c + spr_sz_expect;
+    if (s_prog_done > s_prog_total)
+        s_prog_done = s_prog_total;
+
+    if (s_prog_steps) {
+#ifndef HOST_BUILD
+        {
+            uint32_t weight =
+                flash_align_erase(sz.p) + flash_align_erase(sz.m) +
+                flash_align_erase(sz.v) + flash_align_erase(sz.s) +
+                flash_align_erase(gfix_sz) + flash_align_erase(sz.c) +
+                flash_align_erase(spr_sz_expect);
+            uint32_t max_game = neo_flash_max_game_bytes();
+            if (max_game && weight > max_game) {
+                printf("neo_neo: game needs %u bytes, max %u\n",
+                       (unsigned)weight, (unsigned)max_game);
+                zip_set_err("ROM too large for flash");
+                fclose(f);
+                return 0;
+            }
+        }
+#endif
+        snprintf(s_prog_hdr, sizeof(s_prog_hdr), "Neo Geo");
+        if (!prog_paint(prog_pct(), 1)) {
+            fclose(f);
+            return 0;
+        }
+    } else
+        printf("neo_neo: all regions already cached\n");
+
+    ram_init();
+
+    if (!neo_ensure_raw(f, stem, "p2", "prom", off_p, sz.p, &p, &p_sz) ||
+        !neo_ensure_raw(f, stem, "m", "mrom", off_m, sz.m, &m, &m_sz) ||
+        !neo_ensure_raw(f, stem, "v", "vrom", off_v, sz.v, &v, &v_sz) ||
+        !neo_ensure_sfix(f, stem, off_s, sz.s, &s, &s_sz, &gfix, &g_sz)) {
+        printf("neo_neo: fail before tiles: %s\n", zip_err);
+        fclose(f);
+        ram_init();
+        return 0;
+    }
+
+    /* Drop sfix staging before spr_usage (same as zip path). */
+    ram_init();
+
+    if (!neo_ensure_tiles(f, stem, off_c, sz.c, &c, &c_sz, &spr, &spr_sz)) {
+        printf("neo_neo: fail tiles: %s\n", zip_err);
+        fclose(f);
+        ram_init();
+        return 0;
+    }
+    fclose(f);
+    ram_init();
+
+    if (s_prog_steps)
+        prog_finish();
+
+    /* Stem is the cache key / soft game id (no chip-name detect). */
+    if (!neo_rom_bind_regions(stem, p, p_sz, m, m_sz, v, v_sz, s, s_sz, gfix,
+                              g_sz, c, c_sz, spr, spr_sz)) {
+        printf("neo_neo: bind failed: %s\n", gno_flash_last_error());
         zip_set_err(gno_flash_last_error());
         return 0;
     }
