@@ -9,6 +9,8 @@
 
 #define NEO_CFG_HW     "neo_hw"
 #define NEO_CFG_REGION "neo_region"
+#define NEO_CFG_SWAP_AB "neo_swap_ab"
+#define NEO_CFG_SWAP_CD "neo_swap_cd"
 
 neo_hw_t neo_settings_hw_get(void)
 {
@@ -105,4 +107,24 @@ void neo_settings_apply_unibios(void)
 
     /* Present AES/MVS on STATUS immediately (before any 68k BIOS code). */
     neo_set_input(0, 0, 0);
+}
+
+int neo_settings_swap_ab_get(void)
+{
+    return odroid_settings_app_int32_get(NEO_CFG_SWAP_AB, 1) != 0;
+}
+
+void neo_settings_swap_ab_set(int enabled)
+{
+    odroid_settings_app_int32_set(NEO_CFG_SWAP_AB, enabled ? 1 : 0);
+}
+
+int neo_settings_swap_cd_get(void)
+{
+    return odroid_settings_app_int32_get(NEO_CFG_SWAP_CD, 0) != 0;
+}
+
+void neo_settings_swap_cd_set(int enabled)
+{
+    odroid_settings_app_int32_set(NEO_CFG_SWAP_CD, enabled ? 1 : 0);
 }

@@ -125,10 +125,28 @@ static void SramSave(void)
 static void map_input(const odroid_gamepad_state_t *joy)
 {
     Uint8 buttons = 0;
-    if (joy->values[ODROID_INPUT_A])     buttons |= 0x01;
-    if (joy->values[ODROID_INPUT_B])     buttons |= 0x02;
-    if (joy->values[ODROID_INPUT_X])     buttons |= 0x04; /* C */
-    if (joy->values[ODROID_INPUT_Y])     buttons |= 0x08; /* D */
+
+    int a = joy->values[ODROID_INPUT_A];
+    int b = joy->values[ODROID_INPUT_B];
+    int c = joy->values[ODROID_INPUT_X];
+    int d = joy->values[ODROID_INPUT_Y];
+
+    if (neo_settings_swap_ab_get()) {
+        int temp = a;
+        a = b;
+        b = temp;
+    }
+
+    if (neo_settings_swap_cd_get()) {
+        int temp = c;
+        c = d;
+        d = temp;
+    }
+
+    if (a) buttons |= 0x01;
+    if (b) buttons |= 0x02;
+    if (c) buttons |= 0x04; /* C */
+    if (d) buttons |= 0x08; /* D */
     if (joy->values[ODROID_INPUT_UP])    buttons |= 0x10;
     if (joy->values[ODROID_INPUT_DOWN])  buttons |= 0x20;
     if (joy->values[ODROID_INPUT_LEFT])  buttons |= 0x40;
@@ -292,6 +310,8 @@ static void neo_fatal_quit(const char *line1, const char *line2)
 
 static char neo_opt_hw_str[12];
 static char neo_opt_region_str[12];
+static char neo_opt_swap_ab_str[4];
+static char neo_opt_swap_cd_str[4];
 
 static void neo_hw_to_str(neo_hw_t hw, char *buf)
 {
@@ -355,6 +375,36 @@ static bool update_region_cb(odroid_dialog_choice_t *option, odroid_dialog_event
     return event == ODROID_DIALOG_ENTER;
 }
 
+static bool update_swap_ab_cb(odroid_dialog_choice_t *option,
+                              odroid_dialog_event_t event, uint32_t repeat)
+{
+    (void)repeat;
+    int enabled = neo_settings_swap_ab_get();
+
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+        enabled = !enabled;
+        neo_settings_swap_ab_set(enabled);
+    }
+
+    strcpy(option->value, enabled ? "On" : "Off");
+    return event == ODROID_DIALOG_ENTER;
+}
+
+static bool update_swap_cd_cb(odroid_dialog_choice_t *option,
+                              odroid_dialog_event_t event, uint32_t repeat)
+{
+    (void)repeat;
+    int enabled = neo_settings_swap_cd_get();
+
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+        enabled = !enabled;
+        neo_settings_swap_cd_set(enabled);
+    }
+
+    strcpy(option->value, enabled ? "On" : "Off");
+    return event == ODROID_DIALOG_ENTER;
+}
+
 void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     odroid_gamepad_state_t joystick;
@@ -387,6 +437,8 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     neo_hw_to_str(neo_settings_hw_get(), neo_opt_hw_str);
     neo_region_to_str(neo_settings_region_get(), neo_opt_region_str);
+    strcpy(neo_opt_swap_ab_str, neo_settings_swap_ab_get() ? "On" : "Off");
+    strcpy(neo_opt_swap_cd_str, neo_settings_swap_cd_get() ? "On" : "Off");
 
     /* Start SAI/DMA only after ROM/flash load. Starting earlier leaves the
      * DMA half unfilled for seconds (QSPI cache / zip inflate) and can leave
@@ -424,6 +476,8 @@ void app_main_neogeo(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             odroid_dialog_choice_t options[] = {
                 {100, "System", neo_opt_hw_str, 1, &update_hw_cb},
                 {101, "Region", neo_opt_region_str, 1, &update_region_cb},
+                {102, "Swap A/B", neo_opt_swap_ab_str, 1, &update_swap_ab_cb},
+                {103, "Swap C/D", neo_opt_swap_cd_str, 1, &update_swap_cd_cb},
                 ODROID_DIALOG_CHOICE_LAST
             };
             common_emu_input_loop(&joystick, options, &neo_repaint);

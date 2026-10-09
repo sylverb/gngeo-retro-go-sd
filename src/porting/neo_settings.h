@@ -30,4 +30,9 @@ static inline int neo_settings_is_aes(void)
 /* Stamp UniBIOS prefs into backup RAM / memcard (call after buffers exist). */
 void neo_settings_apply_unibios(void);
 
+int neo_settings_swap_ab_get(void);
+void neo_settings_swap_ab_set(int enabled);
+int neo_settings_swap_cd_get(void);
+void neo_settings_swap_cd_set(int enabled);
+
 #endif
